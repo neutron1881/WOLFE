@@ -481,6 +481,49 @@ namespace ATAS.Indicators.Technical
             set { _maxLinesDash = value; RedrawChart(); }
         }
 
+        // Net levels (Calls - Puts) por strike
+        private bool _showNetLevels = true;
+        [Display(GroupName = "8. Net levels", Name = "Show net levels (Calls-Puts)", Order = 90)]
+        public bool ShowNetLevels
+        {
+            get => _showNetLevels;
+            set { _showNetLevels = value; RedrawChart(); }
+        }
+
+        private int _netThicknessPx = 9;
+        [Display(GroupName = "8. Net levels", Name = "Net level thickness (px)", Order = 91)]
+        [Range(2, 60)]
+        public int NetThicknessPx
+        {
+            get => _netThicknessPx;
+            set { _netThicknessPx = Math.Clamp(value, 2, 60); RedrawChart(); }
+        }
+
+        private int _netOpacity = 200;
+        [Display(GroupName = "8. Net levels", Name = "Net level opacity", Order = 92)]
+        [Range(0, 255)]
+        public int NetOpacity
+        {
+            get => _netOpacity;
+            set { _netOpacity = Math.Clamp(value, 0, 255); RedrawChart(); }
+        }
+
+        private Color _netCallsColor = Color.DodgerBlue;
+        [Display(GroupName = "8. Net levels", Name = "Net Calls color", Order = 93)]
+        public Color NetCallsColor
+        {
+            get => _netCallsColor;
+            set { _netCallsColor = value; RedrawChart(); }
+        }
+
+        private Color _netPutsColor = Color.IndianRed;
+        [Display(GroupName = "8. Net levels", Name = "Net Puts color", Order = 94)]
+        public Color NetPutsColor
+        {
+            get => _netPutsColor;
+            set { _netPutsColor = value; RedrawChart(); }
+        }
+
         public CashProfile()
         {
             EnableCustomDrawing = true;
@@ -584,6 +627,48 @@ namespace ATAS.Indicators.Technical
                 {
                     var rectR = new Rectangle(xCenter, top, rightW, _barThicknessPx);
                     context.FillRectangle(Color.FromArgb(_fillOpacity, rightColor), rectR);
+                }
+
+                // Net level (Calls - Puts)
+                if (_showNetLevels)
+                {
+                    var diff = row.Calls - row.Puts;
+                    if (diff != 0)
+                    {
+                        int w = (int)Math.Round((double)Math.Abs(diff) * scale);
+                        if (w > 0)
+                        {
+                            int t = _netThicknessPx;
+                            int topNet = y - t / 2;
+                            if (diff > 0)
+                            {
+                                // Calls dominan -> dibujar hacia el lado Calls
+                                if (_callsOnRight)
+                                {
+                                    var r = new Rectangle(xCenter, topNet, w, t);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netCallsColor), r);
+                                }
+                                else
+                                {
+                                    var r = new Rectangle(xCenter - w, topNet, w, t);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netCallsColor), r);
+                                }
+                            }
+                            else // diff < 0 -> Puts dominan
+                            {
+                                if (_callsOnRight)
+                                {
+                                    var r = new Rectangle(xCenter - w, topNet, w, t);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netPutsColor), r);
+                                }
+                                else
+                                {
+                                    var r = new Rectangle(xCenter, topNet, w, t);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netPutsColor), r);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Values and strikes near bars
