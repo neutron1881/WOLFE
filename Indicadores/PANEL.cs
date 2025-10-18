@@ -130,6 +130,24 @@ namespace ATAS.Indicators.Technical
         private DateTime? _dexPrevTs;
         private DateTime? _dexCurrTs;
 
+        // Seguimiento individual de Call/Put Delta para Velocidad DEX (promedio cambios relativos)
+        private decimal? _dexCallPrev;
+        private decimal? _dexCallCurr;
+        private decimal? _dexPutPrev;
+        private decimal? _dexPutCurr;
+
+        // Seguimiento de Cash Call/Put para Velocidad Vanna (promedio cambios relativos)
+        private decimal? _cashCallPrev;
+        private decimal? _cashCallCurr;
+        private decimal? _cashPutPrev;
+        private decimal? _cashPutCurr;
+        
+        // Seguimiento de IV Call/Put para Velocidad Skew
+        private decimal? _ivCallPrev;
+        private decimal? _ivCallCurr;
+        private decimal? _ivPutPrev;
+        private decimal? _ivPutCurr;
+
         public SpotGammaPanelCsv()
         {
             EnableCustomDrawing = true;
@@ -163,11 +181,11 @@ namespace ATAS.Indicators.Technical
                 // VELOCIDAD VANNA
                 new Section
                 {
-                    Title = "Velocidad Vanna",
+                    Title = "Velocidad Cash",
                     HeaderColor = Color.FromArgb(130, 90, 180),
                     Items = new []
                     {
-                        new Metric{ Title = "Velocidad Vanna (%/min)", Keys = new[]{"__VannaPct__"}, Format = "+0.##;-0.##", Unit = "%" }
+                        new Metric{ Title = "Velocidad Cash (%/min)", Keys = new[]{"__VannaPct__"}, Format = "+0;-0;0", Unit = "%" }
                     }
                 },
                 // VELOCIDAD SKEW
@@ -546,9 +564,42 @@ namespace ATAS.Indicators.Technical
                 if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { dexPutRaw = v; break; }
             }
 
+            // Cash Call/Put (actuales)
+            string cashCallRaw = null;
+            foreach (var k in new[] { "CashCall", "Cash Call" })
+            {
+                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { cashCallRaw = v; break; }
+            }
+            string cashPutRaw = null;
+            foreach (var k in new[] { "CashPut", "Cash Put" })
+            {
+                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { cashPutRaw = v; break; }
+            }
+
+            // IV Call/Put (actuales)
+            string ivCallRaw = null;
+            foreach (var k in new[] { "IVCall", "IV Call", "Call IV" })
+            {
+                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { ivCallRaw = v; break; }
+            }
+            string ivPutRaw = null;
+            foreach (var k in new[] { "IVPut", "IV Put", "Put IV" })
+            {
+                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { ivPutRaw = v; break; }
+            }
+
             // Intenta obtener Net Gex actual y previo desde la última y penúltima fila del CSV (formato cabecera+filas)
             decimal? gexCurrFromRows = null, gexPrevFromRows = null;
             DateTime? tsCurrRow = null, tsPrevRow = null;
+            // También intentaremos obtener Call/Put Delta actual y previo desde filas
+            decimal? callCurrFromRows = null, callPrevFromRows = null;
+            decimal? putCurrFromRows = null, putPrevFromRows = null;
+            // Y Cash Call/Put actual y previo desde filas
+            decimal? cashCallCurrFromRows = null, cashCallPrevFromRows = null;
+            decimal? cashPutCurrFromRows = null, cashPutPrevFromRows = null;
+            // Y IV Call/Put actual y previo desde filas
+            decimal? ivCallCurrFromRows = null, ivCallPrevFromRows = null;
+            decimal? ivPutCurrFromRows = null, ivPutPrevFromRows = null;
             try
             {
                 var header = first;
@@ -577,30 +628,142 @@ namespace ATAS.Indicators.Technical
                         }
                     }
 
-                    if (colGex >= 0)
+                    // Índices de Call/Put Delta
+                    int colCall = -1;
+                    var callCols = new[] { "net_call_dex", "call_dex", "Call Delta", "CallDelta" };
+                    for (int i = 0; i < header.Length && colCall < 0; i++)
                     {
-                        var prevRow = SplitCsvLine(lines[^2]);
-                        if (prevRow.Length == header.Length)
+                        foreach (var key in callCols)
                         {
-                            // Última fila = actual
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase))
+                            { colCall = i; break; }
+                        }
+                    }
+                    int colPut = -1;
+                    var putCols = new[] { "net_put_dex", "put_dex", "Put Delta", "PutDelta" };
+                    for (int i = 0; i < header.Length && colPut < 0; i++)
+                    {
+                        foreach (var key in putCols)
+                        {
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase))
+                            { colPut = i; break; }
+                        }
+                    }
+
+                    // Índices para Cash Call/Put
+                    int colCashCall = -1;
+                    foreach (var key in new[] { "CashCall", "Cash Call" })
+                    {
+                        for (int i = 0; i < header.Length && colCashCall < 0; i++)
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colCashCall = i; break; }
+                        if (colCashCall >= 0) break;
+                    }
+                    int colCashPut = -1;
+                    foreach (var key in new[] { "CashPut", "Cash Put" })
+                    {
+                        for (int i = 0; i < header.Length && colCashPut < 0; i++)
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colCashPut = i; break; }
+                        if (colCashPut >= 0) break;
+                    }
+
+                    // Índices para IV Call/Put
+                    int colIvCall = -1;
+                    foreach (var key in new[] { "IVCall", "IV Call", "Call IV" })
+                    {
+                        for (int i = 0; i < header.Length && colIvCall < 0; i++)
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colIvCall = i; break; }
+                        if (colIvCall >= 0) break;
+                    }
+                    int colIvPut = -1;
+                    foreach (var key in new[] { "IVPut", "IV Put", "Put IV" })
+                    {
+                        for (int i = 0; i < header.Length && colIvPut < 0; i++)
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colIvPut = i; break; }
+                        if (colIvPut >= 0) break;
+                    }
+                    var prevRow = SplitCsvLine(lines[^2]);
+                    if (prevRow.Length == header.Length)
+                    {
+                        // Última fila = actual, Penúltima = previo
+                        if (colGex >= 0)
+                        {
                             if (colGex < lastRow.Length && TryParseNumber(lastRow[colGex], out var gexNow, out _, out _, out _))
                                 gexCurrFromRows = gexNow;
-                            // Penúltima fila = previo
                             if (colGex < prevRow.Length && TryParseNumber(prevRow[colGex], out var gexPrev, out _, out _, out _))
                                 gexPrevFromRows = gexPrev;
+                        }
+                        if (colCall >= 0)
+                        {
+                            if (colCall < lastRow.Length && TryParseNumber(lastRow[colCall], out var cNow, out _, out _, out _))
+                                callCurrFromRows = cNow;
+                            if (colCall < prevRow.Length && TryParseNumber(prevRow[colCall], out var cPrev, out _, out _, out _))
+                                callPrevFromRows = cPrev;
+                        }
+                        if (colPut >= 0)
+                        {
+                            if (colPut < lastRow.Length && TryParseNumber(lastRow[colPut], out var pNow, out _, out _, out _))
+                                putCurrFromRows = pNow;
+                            if (colPut < prevRow.Length && TryParseNumber(prevRow[colPut], out var pPrev, out _, out _, out _))
+                                putPrevFromRows = pPrev;
+                        }
 
-                            if (colTs >= 0)
+                        if (colCashCall >= 0)
+                        {
+                            if (colCashCall < lastRow.Length && TryParseNumber(lastRow[colCashCall], out var ccNow, out _, out _, out _))
+                                cashCallCurrFromRows = ccNow;
+                            if (colCashCall < prevRow.Length && TryParseNumber(prevRow[colCashCall], out var ccPrev, out _, out _, out _))
+                                cashCallPrevFromRows = ccPrev;
+                        }
+                        if (colCashPut >= 0)
+                        {
+                            if (colCashPut < lastRow.Length && TryParseNumber(lastRow[colCashPut], out var cpNow, out _, out _, out _))
+                                cashPutCurrFromRows = cpNow;
+                            if (colCashPut < prevRow.Length && TryParseNumber(prevRow[colCashPut], out var cpPrev, out _, out _, out _))
+                                cashPutPrevFromRows = cpPrev;
+                        }
+
+                        if (colIvCall >= 0)
+                        {
+                            // Escanear desde el final y tomar los dos últimos valores no nulos/ni cero
+                            var found = new List<decimal>(2);
+                            for (int r = lines.Length - 1; r >= 1 && found.Count < 2; r--)
                             {
-                                if (colTs < lastRow.Length && DateTime.TryParse(lastRow[colTs], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dt1))
-                                    tsCurrRow = dt1;
-                                else if (colTs < lastRow.Length && DateTime.TryParse(lastRow[colTs], CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out dt1))
-                                    tsCurrRow = dt1;
-
-                                if (colTs < prevRow.Length && DateTime.TryParse(prevRow[colTs], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dt2))
-                                    tsPrevRow = dt2;
-                                else if (colTs < prevRow.Length && DateTime.TryParse(prevRow[colTs], CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out dt2))
-                                    tsPrevRow = dt2;
+                                var row = SplitCsvLine(lines[r]);
+                                if (colIvCall < row.Length && TryParseNumber(row[colIvCall], out var val, out _, out _, out _))
+                                {
+                                    if (val != 0m) found.Add(val);
+                                }
                             }
+                            if (found.Count > 0) ivCallCurrFromRows = found[0];
+                            if (found.Count > 1) ivCallPrevFromRows = found[1];
+                        }
+                        if (colIvPut >= 0)
+                        {
+                            // Escanear desde el final y tomar los dos últimos valores no nulos/ni cero
+                            var found = new List<decimal>(2);
+                            for (int r = lines.Length - 1; r >= 1 && found.Count < 2; r--)
+                            {
+                                var row = SplitCsvLine(lines[r]);
+                                if (colIvPut < row.Length && TryParseNumber(row[colIvPut], out var val, out _, out _, out _))
+                                {
+                                    if (val != 0m) found.Add(val);
+                                }
+                            }
+                            if (found.Count > 0) ivPutCurrFromRows = found[0];
+                            if (found.Count > 1) ivPutPrevFromRows = found[1];
+                        }
+
+                        if (colTs >= 0)
+                        {
+                            if (colTs < lastRow.Length && DateTime.TryParse(lastRow[colTs], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dt1))
+                                tsCurrRow = dt1;
+                            else if (colTs < lastRow.Length && DateTime.TryParse(lastRow[colTs], CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out dt1))
+                                tsCurrRow = dt1;
+
+                            if (colTs < prevRow.Length && DateTime.TryParse(prevRow[colTs], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dt2))
+                                tsPrevRow = dt2;
+                            else if (colTs < prevRow.Length && DateTime.TryParse(prevRow[colTs], CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out dt2))
+                                tsPrevRow = dt2;
                         }
                     }
                 }
@@ -652,39 +815,40 @@ namespace ATAS.Indicators.Technical
                     _gexPrevTs = tsPrevRow ?? _gexPrevTs;
                 }
 
-                // DEX combinado prev/curr
-                decimal? dexCall = null, dexPut = null;
-                if (TryParseNumber(dexCallRaw ?? string.Empty, out var dCall, out _, out _, out _)) dexCall = dCall;
-                if (TryParseNumber(dexPutRaw ?? string.Empty, out var dPut, out _, out _, out _)) dexPut = dPut;
-                decimal? dexCombined = null;
-                if (dexCall.HasValue && dexPut.HasValue)
-                    dexCombined = (dexCall.Value + dexPut.Value) / 2m;
-                else if (dexCall.HasValue)
-                    dexCombined = dexCall.Value;
-                else if (dexPut.HasValue)
-                    dexCombined = dexPut.Value;
-
-                if (dexCombined.HasValue)
+                // Si logramos leer Call/Put desde filas, forzamos prev/curr directamente del archivo
+                if (callCurrFromRows.HasValue && callPrevFromRows.HasValue)
                 {
-                    var dexIsNew = isNewSample;
-                    if (!dexIsNew)
-                    {
-                        if (!_dexCurrCombined.HasValue || _dexCurrCombined.Value != dexCombined.Value)
-                          dexIsNew = true;
-                    }
+                    _dexCallCurr = callCurrFromRows.Value;
+                    _dexCallPrev = callPrevFromRows.Value;
+                }
+                if (putCurrFromRows.HasValue && putPrevFromRows.HasValue)
+                {
+                    _dexPutCurr = putCurrFromRows.Value;
+                    _dexPutPrev = putPrevFromRows.Value;
+                }
 
-                    if (dexIsNew)
-                    {
-                        _dexPrevCombined = _dexCurrCombined;
-                        _dexPrevTs = _dexCurrTs;
-                        _dexCurrCombined = dexCombined.Value;
-                        _dexCurrTs = ts ?? DateTime.Now;
-                    }
-                    else
-                    {
-                        _dexCurrCombined = dexCombined.Value;
-                        if (ts.HasValue) _dexCurrTs = ts;
-                    }
+                // Si logramos leer Cash Call/Put desde filas, forzamos prev/curr directamente del archivo
+                if (cashCallCurrFromRows.HasValue && cashCallPrevFromRows.HasValue)
+                {
+                    _cashCallCurr = cashCallCurrFromRows.Value;
+                    _cashCallPrev = cashCallPrevFromRows.Value;
+                }
+                if (cashPutCurrFromRows.HasValue && cashPutPrevFromRows.HasValue)
+                {
+                    _cashPutCurr = cashPutCurrFromRows.Value;
+                    _cashPutPrev = cashPutPrevFromRows.Value;
+                }
+
+                // Si logramos leer IV Call/Put desde filas, forzamos prev/curr directamente del archivo
+                if (ivCallCurrFromRows.HasValue && ivCallPrevFromRows.HasValue)
+                {
+                    _ivCallCurr = ivCallCurrFromRows.Value;
+                    _ivCallPrev = ivCallPrevFromRows.Value;
+                }
+                if (ivPutCurrFromRows.HasValue && ivPutPrevFromRows.HasValue)
+                {
+                    _ivPutCurr = ivPutCurrFromRows.Value;
+                    _ivPutPrev = ivPutPrevFromRows.Value;
                 }
 
                 _data = map; // actualizar snapshot visible
@@ -762,9 +926,6 @@ namespace ATAS.Indicators.Technical
             var (vannaAbs, vannaPct) = CalculateVannaRates(snapshot);
             var (ivSkewAbs, ivSkewPct) = CalculateIvSkewRates(snapshot);
 
-            // Override solicitado: fijar Velocidad de Vanna al +80% para ver la gráfica
-            vannaPct = 80m;
-
             // Dibujar columnas
             int x = panelLeft;
             for (int c = 0; c < _sections.Count; c++)
@@ -826,13 +987,14 @@ namespace ATAS.Indicators.Technical
                         }
                         else if (mi.Keys != null && mi.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)))
                         {
+                            // Velocidad Cash: porcentaje (promedio de difs relativas con signo)
                             gaugeVal = vannaPct;
-                            minRange = _dexPctMin; maxRange = _dexPctMax; // mismo rango por defecto
+                            minRange = _vannaPctMin; maxRange = _vannaPctMax;
                         }
                         else if (mi.Keys != null && mi.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal)))
                         {
                             gaugeVal = ivSkewPct;
-                            minRange = -1m; maxRange = 1m; // rango específico para skew
+                            minRange = _skewPctMin; maxRange = _skewPctMax; // usa rango configurable
                         }
                         else
                         {
@@ -878,43 +1040,24 @@ namespace ATAS.Indicators.Technical
 
                             if (m.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)))
                             {
-                                // Mostrar % cambio de Net Gex respecto al valor previo
-                                decimal? pctChange = null;
-                                lock (_sync)
-                                {
-                                    if (_gexCurr.HasValue && _gexPrev.HasValue)
-                                    {
-                                        var diff = _gexCurr.Value - _gexPrev.Value;
-                                        var denom = Math.Max(Math.Abs(_gexPrev.Value), 1e-8m);
-                                        pctChange = Math.Abs(diff) / denom * 100m;
-                                    }
-                                }
-
-                                if (pctChange.HasValue)
-                                {
-                                    gaugeVal = pctChange.Value;
-                                    // Rango 0..100 (% cambio)
-                                    minRange = 0m; maxRange = 100m;
-                                    // Formato porcentaje sin signo
-                                    metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "0.##", Unit = "%" };
-                                }
-                                else
-                                {
-                                    gaugeVal = 0m; minRange = 0m; maxRange = 100m;
-                                    metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "0.##", Unit = "%" };
-                                }
+                                gaugeVal = dexPct; minRange = _dexPctMin; maxRange = _dexPctMax;
+                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                             }
                             else if (m.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)))
                             {
                                 gaugeVal = gexPct; minRange = _gexPctMin; maxRange = _gexPctMax;
+                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                             }
                             else if (m.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)))
                             {
+                                // Velocidad Cash (%): usa rango VannaPct
                                 gaugeVal = vannaPct; minRange = _vannaPctMin; maxRange = _vannaPctMax;
+                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                             }
                             else if (m.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal)))
                             {
                                 gaugeVal = ivSkewPct; minRange = _skewPctMin; maxRange = _skewPctMax;
+                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                             }
                             else { gaugeVal = null; minRange = _dexPctMin; maxRange = _dexPctMax; }
 
@@ -1018,63 +1161,29 @@ namespace ATAS.Indicators.Technical
 
         private (decimal? abs, decimal? pct) CalculateDexRates(Dictionary<string, string> map)
         {
-            // Primero, si tenemos prev/curr combinados con timestamps, normaliza a %/min
-            decimal? prev;
-            decimal? curr;
-            DateTime? tsPrev;
-            DateTime? tsCurr;
+            // Nueva definición: promedio de cambios relativos de Call y Put respecto a sus valores previos
+            decimal? callPrev, callCurr, putPrev, putCurr;
             lock (_sync)
             {
-                prev = _dexPrevCombined;
-                curr = _dexCurrCombined;
-                tsPrev = _dexPrevTs;
-                tsCurr = _dexCurrTs;
-            }
-            if (prev.HasValue && curr.HasValue)
-            {
-                var diff = curr.Value - prev.Value;
-                double minutes = 1d;
-                if (tsPrev.HasValue && tsCurr.HasValue)
-                {
-                    var dt = (tsCurr.Value - tsPrev.Value).TotalMinutes;
-                    if (dt > 1e-6) minutes = dt;
-                }
-                var absPerMin = Math.Abs(diff) / (decimal)minutes;
-                var denom = Math.Max(Math.Abs(prev.Value), 1e-8m);
-                var pctPerMin = ((diff / denom) * 100m) / (decimal)minutes;
-                pctPerMin = Math.Max(-100m, Math.Min(100m, pctPerMin));
-                return (absPerMin, pctPerMin);
+                callPrev = _dexCallPrev; callCurr = _dexCallCurr;
+                putPrev = _dexPutPrev; putCurr = _dexPutCurr;
             }
 
-            // Fallback: usa la lógica anterior basada en series en CSV
-            // keys admitidas
-            var callHistKeys = new[] { "net_call_dex_hist", "call_dex_hist", "CallDexHist" };
-            var callCurrKeys = new[] { "net_call_dex", "call_dex", "Call Delta", "CallDelta" };
-            var putHistKeys  = new[] { "net_put_dex_hist", "put_dex_hist", "PutDexHist" };
-            var putCurrKeys  = new[] { "net_put_dex", "put_dex", "Put Delta", "PutDelta" };
+            decimal? callPct = null, putPct = null;
+            if (callPrev.HasValue && callPrev.Value != 0m && callCurr.HasValue)
+                callPct = ((callCurr.Value - callPrev.Value) / (callPrev.Value)) * 100m;
+            if (putPrev.HasValue && putPrev.Value != 0m && putCurr.HasValue)
+                putPct = ((putCurr.Value - putPrev.Value) / (putPrev.Value)) * 100m;
 
-            var (callAbs, callPct) = CalculateRate(map, callHistKeys, callCurrKeys);
-            var (putAbs, putPct)   = CalculateRate(map, putHistKeys,  putCurrKeys);
+            decimal? avgPct = null;
+            if (callPct.HasValue && putPct.HasValue)
+                avgPct = (callPct.Value + putPct.Value) / 2m;
+            else if (callPct.HasValue)
+                avgPct = callPct.Value;
+            else if (putPct.HasValue)
+                avgPct = putPct.Value;
 
-            if (callAbs == null && putAbs == null && callPct == null && putPct == null)
-                return (null, null);
-
-            decimal? abs = null, pct = null;
-            if (callAbs.HasValue || putAbs.HasValue)
-            {
-                var vals = new List<decimal>();
-                if (callAbs.HasValue) vals.Add(callAbs.Value);
-                if (putAbs.HasValue) vals.Add(putAbs.Value);
-                if (vals.Count > 0) abs = vals.Average();
-            }
-            if (callPct.HasValue || putPct.HasValue)
-            {
-                var vals = new List<decimal>();
-                if (callPct.HasValue) vals.Add(callPct.Value);
-                if (putPct.HasValue) vals.Add(putPct.Value);
-                if (vals.Count > 0) pct = vals.Average();
-            }
-            return (abs, pct);
+            return (null, avgPct);
         }
 
         private static (decimal? abs, decimal? pct) CalculateRate(Dictionary<string, string> map, string[] histKeys, string[] currKeys)
@@ -1193,12 +1302,32 @@ namespace ATAS.Indicators.Technical
                     txt = FormatNumber(num, metric.Format, unit);
                 }
 
+                // Color base por signo
                 var col = num switch
                 {
                     > 0m => Color.FromArgb(60, 220, 120),
                     < 0m => Color.FromArgb(240, 100, 100),
                     _ => _valueColor
                 };
+
+                // Overrides por métrica solicitados
+                var title = metric.Title?.Trim();
+                if (!string.IsNullOrEmpty(title))
+                {
+                    if (string.Equals(title, "Put Vol", StringComparison.OrdinalIgnoreCase))
+                    {
+                        col = Color.FromArgb(240, 100, 100); // siempre rojo
+                    }
+                    else if (string.Equals(title, "Put OI", StringComparison.OrdinalIgnoreCase))
+                    {
+                        col = Color.FromArgb(240, 100, 100); // siempre rojo
+                    }
+                    else if (string.Equals(title, "IV Put", StringComparison.OrdinalIgnoreCase))
+                    {
+                        col = Color.FromArgb(240, 100, 100); // siempre rojo
+                    }
+                    // Net Vol / Net Delta / Net Gex: ya usan color por signo (default)
+                }
                 return (txt, col);
             }
 
@@ -1395,7 +1524,8 @@ namespace ATAS.Indicators.Technical
             catch { textVal = (value ?? 0m).ToString("+0.##;-0.##", CultureInfo.InvariantCulture) + (string.IsNullOrEmpty(metric.Unit) ? string.Empty : metric.Unit); }
             int valW = MeasureText(ctx, textVal, bigFont);
             int valH = MeasureSize(ctx, textVal, bigFont).Height;
-            ctx.DrawString(textVal, bigFont, Color.White, cx - valW / 2, cy - valH - ringThickness - 4);
+            var bigCol = (value ?? 0m) >= 0m ? _gaugeProgressPositive : _gaugeProgressNegative;
+            ctx.DrawString(textVal, bigFont, bigCol, cx - valW / 2, cy - valH - ringThickness - 4);
 
             // Flecha dirección opcional
             if (_gaugeShowArrow)
@@ -1576,72 +1706,56 @@ namespace ATAS.Indicators.Technical
 
         private (decimal? abs, decimal? pct) CalculateVannaRates(Dictionary<string, string> map)
         {
-            // Basado en zvanna: usa serie histórica si existe, si no, usa último valor en memoria (local a esta llamada)
-            string hist = map.TryGetValue("zvanna_hist", out var h) ? h : null;
-            string curr = map.TryGetValue("zvanna", out var c) ? c : null;
-
-            var series = ParseSeries(hist);
-            if (TryParseNumber(curr ?? string.Empty, out var currVal, out _, out _, out _))
+            // Definición correcta: ((ΔCashCall/prevCashCall) - (ΔCashPut/prevCashPut)) / 2 * 100
+            decimal? cashCallPrev, cashCallCurr, cashPutPrev, cashPutCurr;
+            lock (_sync)
             {
-                if (series.Count == 0 || series[^1] != currVal)
-                    series.Add(currVal);
+                cashCallPrev = _cashCallPrev; cashCallCurr = _cashCallCurr;
+                cashPutPrev = _cashPutPrev;   cashPutCurr = _cashPutCurr;
             }
 
-            if (series.Count < 2)
-                return (null, null);
+            decimal? callPct = null, putPct = null; // en porcentaje ya multiplicado por 100
+            if (cashCallPrev.HasValue && cashCallPrev.Value != 0m && cashCallCurr.HasValue)
+                callPct = ((cashCallCurr.Value - cashCallPrev.Value) / cashCallPrev.Value) * 100m;
+            if (cashPutPrev.HasValue && cashPutPrev.Value != 0m && cashPutCurr.HasValue)
+                putPct = ((cashPutCurr.Value - cashPutPrev.Value) / cashPutPrev.Value) * 100m;
 
-            var diffs = new List<decimal>();
-            var pctChanges = new List<decimal>();
-            for (int i = 1; i < series.Count; i++)
-            {
-                var prev = series[i - 1];
-                var now = series[i];
-                var d = now - prev;
-                diffs.Add(Math.Abs(d));
-                var denom = Math.Max(Math.Abs(prev), 1e-8m);
-                pctChanges.Add((d / denom) * 100m);
-            }
+            decimal? resultPct = null;
+            if (callPct.HasValue && putPct.HasValue)
+                resultPct = (callPct.Value - putPct.Value) / 2m;
+            else if (callPct.HasValue)
+                resultPct = callPct.Value / 2m;       // asumiendo put≈0
+            else if (putPct.HasValue)
+                resultPct = (-putPct.Value) / 2m;     // asumiendo call≈0
 
-            if (diffs.Count == 0) return (null, null);
-            var absAvg = diffs.Average();
-            var pctAvg = pctChanges.Average();
-            pctAvg = Math.Max(-100m, Math.Min(100m, pctAvg));
-            return (absAvg, pctAvg);
+            return (null, resultPct);
         }
 
         private (decimal? abs, decimal? pct) CalculateIvSkewRates(Dictionary<string, string> map)
         {
-            // Basado en avg_difference (Put IV - Call IV)
-            string hist = map.TryGetValue("iv_historial", out var h) ? h : null;
-            string curr = map.TryGetValue("avg_difference", out var c) ? c : null;
-
-            var series = ParseSeries(hist);
-            if (TryParseNumber(curr ?? string.Empty, out var currVal, out _, out _, out _))
+            // Definición: Velocidad Skew = ((ΔIVCall/prevIVCall) - (ΔIVPut/prevIVPut)) / 2 * 100
+            decimal? ivCallPrev, ivCallCurr, ivPutPrev, ivPutCurr;
+            lock (_sync)
             {
-                if (series.Count == 0 || series[^1] != currVal)
-                    series.Add(currVal);
+                ivCallPrev = _ivCallPrev; ivCallCurr = _ivCallCurr;
+                ivPutPrev  = _ivPutPrev;  ivPutCurr  = _ivPutCurr;
             }
 
-            if (series.Count < 2)
-                return (null, null);
+            decimal? callPct = null, putPct = null;
+            if (ivCallPrev.HasValue && ivCallPrev.Value != 0m && ivCallCurr.HasValue)
+                callPct = ((ivCallCurr.Value - ivCallPrev.Value) / ivCallPrev.Value) * 100m;
+            if (ivPutPrev.HasValue && ivPutPrev.Value != 0m && ivPutCurr.HasValue)
+                putPct = ((ivPutCurr.Value - ivPutPrev.Value) / ivPutPrev.Value) * 100m;
 
-            var diffs = new List<decimal>();
-            var pctChanges = new List<decimal>();
-            for (int i = 1; i < series.Count; i++)
-            {
-                var prev = series[i - 1];
-                var now = series[i];
-                var d = now - prev;
-                diffs.Add(Math.Abs(d));
-                var denom = Math.Max(Math.Abs(prev), 1e-8m);
-                pctChanges.Add((d / denom) * 100m);
-            }
+            decimal? resultPct = null;
+            if (callPct.HasValue && putPct.HasValue)
+                resultPct = (callPct.Value - putPct.Value) / 2m;
+            else if (callPct.HasValue)
+                resultPct = callPct.Value / 2m;   // asume put≈0
+            else if (putPct.HasValue)
+                resultPct = (-putPct.Value) / 2m; // asume call≈0
 
-            if (diffs.Count == 0) return (null, null);
-            var absAvg = diffs.Average();
-            var pctAvg = pctChanges.Average();
-            // El usuario sugiere rango [-1,1] para skew enfocando en deltas pequeños, pero mantenemos %/min para el gauge
-            return (absAvg, pctAvg);
+            return (null, resultPct);
         }
 
         private void InitFileWatcher()
