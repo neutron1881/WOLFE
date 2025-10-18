@@ -124,6 +124,12 @@ namespace ATAS.Indicators.Technical
         private DateTime? _gexPrevTs;
         private DateTime? _gexCurrTs;
 
+        // Seguimiento DEX combinado (Call/Put) para velocidad por minuto
+        private decimal? _dexPrevCombined;
+        private decimal? _dexCurrCombined;
+        private DateTime? _dexPrevTs;
+        private DateTime? _dexCurrTs;
+
         public SpotGammaPanelCsv()
         {
             EnableCustomDrawing = true;
@@ -508,7 +514,7 @@ namespace ATAS.Indicators.Technical
             }
             else
             {
-                // No reconocible, dejar vacío
+                // No recognible, dejar vacío
             }
 
             // Actualiza snapshot y extrae NetGEX y Timestamp para controlar previo/actual
@@ -527,6 +533,79 @@ namespace ATAS.Indicators.Technical
             {
                 if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { gexRaw = v; break; }
             }
+
+            // DEX actual (Call/Put) para combinado
+            string dexCallRaw = null;
+            foreach (var k in new[] { "net_call_dex", "call_dex", "Call Delta", "CallDelta" })
+            {
+                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { dexCallRaw = v; break; }
+            }
+            string dexPutRaw = null;
+            foreach (var k in new[] { "net_put_dex", "put_dex", "Put Delta", "PutDelta" })
+            {
+                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { dexPutRaw = v; break; }
+            }
+
+            // Intenta obtener Net Gex actual y previo desde la última y penúltima fila del CSV (formato cabecera+filas)
+            decimal? gexCurrFromRows = null, gexPrevFromRows = null;
+            DateTime? tsCurrRow = null, tsPrevRow = null;
+            try
+            {
+                var header = first;
+                var lastRow = SplitCsvLine(lines[^1]);
+                if (lastRow.Length == header.Length && lines.Length >= 3)
+                {
+                    // Busca índices de columnas relevantes
+                    int colGex = -1;
+                    var gexCols = new[] { "NetGEX", "Net Gex", "NetGex", "GEXNet", "GEX" };
+                    for (int i = 0; i < header.Length && colGex < 0; i++)
+                    {
+                        foreach (var key in gexCols)
+                        {
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase))
+                            { colGex = i; break; }
+                        }
+                    }
+                    int colTs = -1;
+                    var tsCols = new[] { "Timestamp", "TimeStamp", "LastUpdate", "Last Update" };
+                    for (int i = 0; i < header.Length && colTs < 0; i++)
+                    {
+                        foreach (var key in tsCols)
+                        {
+                            if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase))
+                            { colTs = i; break; }
+                        }
+                    }
+
+                    if (colGex >= 0)
+                    {
+                        var prevRow = SplitCsvLine(lines[^2]);
+                        if (prevRow.Length == header.Length)
+                        {
+                            // Última fila = actual
+                            if (colGex < lastRow.Length && TryParseNumber(lastRow[colGex], out var gexNow, out _, out _, out _))
+                                gexCurrFromRows = gexNow;
+                            // Penúltima fila = previo
+                            if (colGex < prevRow.Length && TryParseNumber(prevRow[colGex], out var gexPrev, out _, out _, out _))
+                                gexPrevFromRows = gexPrev;
+
+                            if (colTs >= 0)
+                            {
+                                if (colTs < lastRow.Length && DateTime.TryParse(lastRow[colTs], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dt1))
+                                    tsCurrRow = dt1;
+                                else if (colTs < lastRow.Length && DateTime.TryParse(lastRow[colTs], CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out dt1))
+                                    tsCurrRow = dt1;
+
+                                if (colTs < prevRow.Length && DateTime.TryParse(prevRow[colTs], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dt2))
+                                    tsPrevRow = dt2;
+                                else if (colTs < prevRow.Length && DateTime.TryParse(prevRow[colTs], CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out dt2))
+                                    tsPrevRow = dt2;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
 
             lock (_sync)
             {
@@ -561,6 +640,50 @@ namespace ATAS.Indicators.Technical
                     {
                         _gexCurr = parsedCurr; // actualizar por si acaso
                         if (ts.HasValue) _gexCurrTs = ts;
+                    }
+                }
+
+                // Si logramos leer desde filas, forzamos prev/curr de GEX directamente del archivo
+                if (gexCurrFromRows.HasValue && gexPrevFromRows.HasValue)
+                {
+                    _gexCurr = gexCurrFromRows.Value;
+                    _gexPrev = gexPrevFromRows.Value;
+                    _gexCurrTs = tsCurrRow ?? _gexCurrTs;
+                    _gexPrevTs = tsPrevRow ?? _gexPrevTs;
+                }
+
+                // DEX combinado prev/curr
+                decimal? dexCall = null, dexPut = null;
+                if (TryParseNumber(dexCallRaw ?? string.Empty, out var dCall, out _, out _, out _)) dexCall = dCall;
+                if (TryParseNumber(dexPutRaw ?? string.Empty, out var dPut, out _, out _, out _)) dexPut = dPut;
+                decimal? dexCombined = null;
+                if (dexCall.HasValue && dexPut.HasValue)
+                    dexCombined = (dexCall.Value + dexPut.Value) / 2m;
+                else if (dexCall.HasValue)
+                    dexCombined = dexCall.Value;
+                else if (dexPut.HasValue)
+                    dexCombined = dexPut.Value;
+
+                if (dexCombined.HasValue)
+                {
+                    var dexIsNew = isNewSample;
+                    if (!dexIsNew)
+                    {
+                        if (!_dexCurrCombined.HasValue || _dexCurrCombined.Value != dexCombined.Value)
+                          dexIsNew = true;
+                    }
+
+                    if (dexIsNew)
+                    {
+                        _dexPrevCombined = _dexCurrCombined;
+                        _dexPrevTs = _dexCurrTs;
+                        _dexCurrCombined = dexCombined.Value;
+                        _dexCurrTs = ts ?? DateTime.Now;
+                    }
+                    else
+                    {
+                        _dexCurrCombined = dexCombined.Value;
+                        if (ts.HasValue) _dexCurrTs = ts;
                     }
                 }
 
@@ -751,9 +874,35 @@ namespace ATAS.Indicators.Technical
                             decimal? gaugeVal;
                             decimal minRange;
                             decimal maxRange;
+                            var metricForDraw = m; // por defecto usa la métrica original
+
                             if (m.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)))
                             {
-                                gaugeVal = dexPct; minRange = _dexPctMin; maxRange = _dexPctMax;
+                                // Mostrar % cambio de Net Gex respecto al valor previo
+                                decimal? pctChange = null;
+                                lock (_sync)
+                                {
+                                    if (_gexCurr.HasValue && _gexPrev.HasValue)
+                                    {
+                                        var diff = _gexCurr.Value - _gexPrev.Value;
+                                        var denom = Math.Max(Math.Abs(_gexPrev.Value), 1e-8m);
+                                        pctChange = Math.Abs(diff) / denom * 100m;
+                                    }
+                                }
+
+                                if (pctChange.HasValue)
+                                {
+                                    gaugeVal = pctChange.Value;
+                                    // Rango 0..100 (% cambio)
+                                    minRange = 0m; maxRange = 100m;
+                                    // Formato porcentaje sin signo
+                                    metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "0.##", Unit = "%" };
+                                }
+                                else
+                                {
+                                    gaugeVal = 0m; minRange = 0m; maxRange = 100m;
+                                    metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "0.##", Unit = "%" };
+                                }
                             }
                             else if (m.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)))
                             {
@@ -769,7 +918,7 @@ namespace ATAS.Indicators.Technical
                             }
                             else { gaugeVal = null; minRange = _dexPctMin; maxRange = _dexPctMax; }
 
-                            DrawSpeedometer(context, rectVel, gaugeVal, minRange, maxRange, m);
+                            DrawSpeedometer(context, rectVel, gaugeVal, minRange, maxRange, metricForDraw);
 
                             if (_showBorder)
                                 context.DrawRectangle(new RenderPen(_borderColor, 1), rectVel);
@@ -831,6 +980,9 @@ namespace ATAS.Indicators.Technical
                         return pct.HasValue ? pct.Value.ToString("+0.##;-0.##", CultureInfo.InvariantCulture) + "%" : "---";
                     }
                 }
+                // Si es una clave especial (__...), no intentes map fallback para evitar colisión con Net Gex
+                if (metric.Keys.Any(k => k.StartsWith("__", StringComparison.Ordinal)))
+                    return "---";
             }
 
             var raw = SafeGet(map, metric.Keys);
@@ -866,6 +1018,35 @@ namespace ATAS.Indicators.Technical
 
         private (decimal? abs, decimal? pct) CalculateDexRates(Dictionary<string, string> map)
         {
+            // Primero, si tenemos prev/curr combinados con timestamps, normaliza a %/min
+            decimal? prev;
+            decimal? curr;
+            DateTime? tsPrev;
+            DateTime? tsCurr;
+            lock (_sync)
+            {
+                prev = _dexPrevCombined;
+                curr = _dexCurrCombined;
+                tsPrev = _dexPrevTs;
+                tsCurr = _dexCurrTs;
+            }
+            if (prev.HasValue && curr.HasValue)
+            {
+                var diff = curr.Value - prev.Value;
+                double minutes = 1d;
+                if (tsPrev.HasValue && tsCurr.HasValue)
+                {
+                    var dt = (tsCurr.Value - tsPrev.Value).TotalMinutes;
+                    if (dt > 1e-6) minutes = dt;
+                }
+                var absPerMin = Math.Abs(diff) / (decimal)minutes;
+                var denom = Math.Max(Math.Abs(prev.Value), 1e-8m);
+                var pctPerMin = ((diff / denom) * 100m) / (decimal)minutes;
+                pctPerMin = Math.Max(-100m, Math.Min(100m, pctPerMin));
+                return (absPerMin, pctPerMin);
+            }
+
+            // Fallback: usa la lógica anterior basada en series en CSV
             // keys admitidas
             var callHistKeys = new[] { "net_call_dex_hist", "call_dex_hist", "CallDexHist" };
             var callCurrKeys = new[] { "net_call_dex", "call_dex", "Call Delta", "CallDelta" };
