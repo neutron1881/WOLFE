@@ -81,6 +81,27 @@ namespace ATAS.Indicators.Technical
         private readonly Color _gaugeProgressColor = Color.FromArgb(40, 110, 230); // azul como en la imagen
         private readonly Color _gaugeZeroTickColor = Color.FromArgb(30, 200, 90); // verde
 
+        // Gauge options v2
+        private bool _useFileWatcher = true;
+        private int _fileWatcherDebounceMs = 300;
+        private FileSystemWatcher _fsw;
+        private DateTime _fswLastEventUtc = DateTime.MinValue;
+        private readonly object _fswSync = new();
+
+        private decimal _gaugeSmoothing = 0.2m; // 0=sin suavizado, 1=sin movimiento (no tiene sentido); típico 0.15-0.3
+        private bool _gaugeShowArrow = true;
+        private Color _gaugeProgressPositive = Color.FromArgb(60, 220, 120);
+        private Color _gaugeProgressNegative = Color.FromArgb(240, 110, 110);
+        private bool _gaugeShowBands = true;
+        private decimal _gaugeBandLow = 0.33m;   // fracción del rango total
+        private decimal _gaugeBandHigh = 0.66m;  // fracción del rango total
+        private Color _gaugeBandLowColor = Color.FromArgb(110, 45, 45);
+        private Color _gaugeBandMidColor = Color.FromArgb(150, 135, 60);
+        private Color _gaugeBandHighColor = Color.FromArgb(45, 110, 60);
+        private bool _gaugeShowDetails = true;   // muestra línea pequeña con abs y %
+
+        private readonly Dictionary<string, decimal> _smoothValues = new(StringComparer.OrdinalIgnoreCase);
+
         // Runtime
         private RenderFont _fontNorm;
         private RenderFont _fontBold;
@@ -95,9 +116,13 @@ namespace ATAS.Indicators.Technical
         private Dictionary<string, string> _data = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _stickyPositive = new(StringComparer.OrdinalIgnoreCase);
 
-        // Estado previo para GEX (para calcular velocidad usando el valor anterior)
-        private decimal? _lastGex;
-        private DateTime _lastGexTime = DateTime.MinValue;
+        // Estado previo para GEX (para calcular velocidad respecto a la lectura anterior del CSV)
+        private decimal? _gexPrev;
+        private decimal? _gexCurr;
+        private DateTime? _lastCsvTimestamp;
+        // Timestamps previos/actuales para calcular velocidad por minuto
+        private DateTime? _gexPrevTs;
+        private DateTime? _gexCurrTs;
 
         public SpotGammaPanelCsv()
         {
@@ -235,7 +260,7 @@ namespace ATAS.Indicators.Technical
 
         #region Properties
         [Category("Datos"), Display(Name = "Ruta CSV", Order = 0)]
-        public string CsvPath { get => _csvPath; set { if (string.Equals(_csvPath, value, StringComparison.OrdinalIgnoreCase)) return; _csvPath = value ?? string.Empty; ForceReload(); } }
+        public string CsvPath { get => _csvPath; set { if (string.Equals(_csvPath, value, StringComparison.OrdinalIgnoreCase)) return; _csvPath = value ?? string.Empty; InitFileWatcher(); ForceReload(); } }
 
         [Category("Datos"), Display(Name = "Actualizar cada (seg)", Order = 1)]
         [Range(5, 3600)]
@@ -299,12 +324,41 @@ namespace ATAS.Indicators.Technical
         [Category("Velocidad"), Display(Name = "Altura mínima panel (px)", Order = 10)]
         [Range(80, 300)]
         public int SpeedMinRowHeight { get => _speedMinRowHeight; set { _speedMinRowHeight = Math.Max(80, Math.Min(300, value)); RedrawChart(); } }
+
+        [Category("Datos"), Display(Name = "Usar File Watcher", Order = 2)]
+        public bool UseFileWatcher { get => _useFileWatcher; set { if (_useFileWatcher == value) return; _useFileWatcher = value; InitFileWatcher(); } }
+
+        [Category("Datos"), Display(Name = "Debounce Watcher (ms)", Order = 3)]
+        [Range(50, 5000)]
+        public int FileWatcherDebounceMs { get => _fileWatcherDebounceMs; set { _fileWatcherDebounceMs = Math.Max(50, Math.Min(5000, value)); } }
+
+        [Category("Velocidad"), Display(Name = "Suavizado gauge (0-1)", Order = 11)]
+        [Range(0.0, 0.9)]
+        public decimal GaugeSmoothing { get => _gaugeSmoothing; set { _gaugeSmoothing = Math.Max(0m, Math.Min(0.9m, value)); } }
+
+        [Category("Velocidad"), Display(Name = "Mostrar flecha dirección", Order = 12)]
+        public bool GaugeShowArrow { get => _gaugeShowArrow; set { _gaugeShowArrow = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Mostrar bandas", Order = 13)]
+        public bool GaugeShowBands { get => _gaugeShowBands; set { _gaugeShowBands = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Banda baja (% rango)", Order = 14)]
+        public decimal GaugeBandLow { get => _gaugeBandLow; set { _gaugeBandLow = Math.Max(0m, Math.Min(1m, value)); RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Banda alta (% rango)", Order = 15)]
+        public decimal GaugeBandHigh { get => _gaugeBandHigh; set { _gaugeBandHigh = Math.Max(0m, Math.Min(1m, value)); RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Color banda baja", Order = 16)]
+        public Color GaugeBandLowColor { get => _gaugeBandLowColor; set { _gaugeBandLowColor = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Color banda media", Order = 17)]
+        public Color GaugeBandMidColor { get => _gaugeBandMidColor; set { _gaugeBandMidColor = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Color banda alta", Order = 18)]
+        public Color GaugeBandHighColor { get => _gaugeBandHighColor; set { _gaugeBandHighColor = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Mostrar detalles (abs/%)", Order = 19)]
+        public bool GaugeShowDetails { get => _gaugeShowDetails; set { _gaugeShowDetails = value; RedrawChart(); } }
         #endregion
 
         protected override void OnInitialize()
         {
             RecreateFonts();
             _nextReadUtc = DateTime.MinValue;
+            InitFileWatcher();
             _ = TryScheduleRead();
         }
 
@@ -457,7 +511,61 @@ namespace ATAS.Indicators.Technical
                 // No reconocible, dejar vacío
             }
 
-            lock (_sync) _data = map;
+            // Actualiza snapshot y extrae NetGEX y Timestamp para controlar previo/actual
+            DateTime? ts = null;
+            if (map.TryGetValue("Timestamp", out var tsStr) || map.TryGetValue("TimeStamp", out tsStr))
+            {
+                if (DateTime.TryParse(tsStr, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dtInv) ||
+                    DateTime.TryParse(tsStr, CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out dtInv))
+                {
+                    ts = dtInv;
+                }
+            }
+
+            string gexRaw = null;
+            foreach (var k in new[] { "NetGEX", "Net Gex", "NetGex", "GEXNet", "GEX" })
+            {
+                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { gexRaw = v; break; }
+            }
+
+            lock (_sync)
+            {
+                var isNewSample = false;
+                if (ts.HasValue)
+                {
+                    if (!_lastCsvTimestamp.HasValue || _lastCsvTimestamp.Value != ts.Value)
+                    {
+                        isNewSample = true;
+                        _lastCsvTimestamp = ts.Value;
+                    }
+                }
+
+                if (TryParseNumber(gexRaw ?? string.Empty, out var parsedCurr, out _, out _, out _))
+                {
+                    if (!isNewSample)
+                    {
+                        // si no hay timestamp o no cambió, usa cambio de valor como nueva muestra
+                        if (!_gexCurr.HasValue || _gexCurr.Value != parsedCurr)
+                            isNewSample = true;
+                    }
+
+                    if (isNewSample)
+                    {
+                        // Mueve actuales a previos
+                        _gexPrev = _gexCurr;
+                        _gexPrevTs = _gexCurrTs;
+                        _gexCurr = parsedCurr;
+                        _gexCurrTs = ts ?? DateTime.Now;
+                    }
+                    else
+                    {
+                        _gexCurr = parsedCurr; // actualizar por si acaso
+                        if (ts.HasValue) _gexCurrTs = ts;
+                    }
+                }
+
+                _data = map; // actualizar snapshot visible
+            }
         }
 
         protected override void OnRender(RenderContext context, DrawingLayouts layout)
@@ -530,6 +638,9 @@ namespace ATAS.Indicators.Technical
             var (gexAbs, gexPct) = CalculateGexRates(snapshot);
             var (vannaAbs, vannaPct) = CalculateVannaRates(snapshot);
             var (ivSkewAbs, ivSkewPct) = CalculateIvSkewRates(snapshot);
+
+            // Override solicitado: fijar Velocidad de Vanna al +80% para ver la gráfica
+            vannaPct = 80m;
 
             // Dibujar columnas
             int x = panelLeft;
@@ -1027,15 +1138,54 @@ namespace ATAS.Indicators.Technical
             DrawArc(ctx, cx, cy, radius, -180, 0, _gaugeBaseColor, ringThickness, 72);
             DrawArc(ctx, cx, cy, radius - ringThickness - innerGap, -180, 0, _gaugeInnerBaseColor, Math.Max(1, ringThickness - 2), 72);
 
-            // Valor a mostrar
+            // Bandas de zonas (debajo del progreso) para que no tape el indicador
+            if (_gaugeShowBands)
+            {
+                float aStart = -180f;
+                float aEnd = 0f;
+                float aLowEnd = aStart + (float)_gaugeBandLow * (aEnd - aStart);
+                float aHighStart = aStart + (float)_gaugeBandHigh * (aEnd - aStart);
+                int bandThickness = Math.Max(2, ringThickness - 6);
+                var lowCol = Color.FromArgb(100, _gaugeBandLowColor);
+                var midCol = Color.FromArgb(100, _gaugeBandMidColor);
+                var highCol = Color.FromArgb(100, _gaugeBandHighColor);
+
+                DrawArc(ctx, cx, cy, radius, aStart, aLowEnd, lowCol, bandThickness, 32);
+                DrawArc(ctx, cx, cy, radius, aLowEnd, aHighStart, midCol, bandThickness, 32);
+                DrawArc(ctx, cx, cy, radius, aHighStart, aEnd, highCol, bandThickness, 32);
+            }
+
+            // Valor a mostrar con suavizado opcional
             decimal val = value ?? 0m;
+            if (_gaugeSmoothing > 0m)
+            {
+                var key = metric.Title ?? "__gauge__";
+                if (!_smoothValues.TryGetValue(key, out var last)) last = val;
+                var smoothed = last + (val - last) * _gaugeSmoothing;
+                _smoothValues[key] = smoothed;
+                val = smoothed;
+            }
+
             if (max <= min) max = min + 1;
             var clamped = Math.Max(min, Math.Min(max, val));
-            float prog = (float)((clamped - min) / (max - min)); // 0..1
-            float endDeg = -180 + prog * 180f; // izquierda (-180) a derecha (0)
 
-            // Progreso
-            DrawArc(ctx, cx, cy, radius, -180, endDeg, _gaugeProgressColor, ringThickness, 90);
+            // Progreso solo en el lado correspondiente: verde (derecha, >0), rojo (izquierda, <0)
+            float zeroAngle = -90f;
+            int segs = 90;
+            if (clamped > 0m)
+            {
+                float tPos = (float)(clamped / Math.Max(1e-8m, (max - 0m))); // 0..1 relativo al lado derecho
+                tPos = Math.Max(0f, Math.Min(1f, tPos));
+                float endRight = zeroAngle + tPos * 90f; // -90 .. 0
+                DrawArc(ctx, cx, cy, radius, zeroAngle, endRight, _gaugeProgressPositive, ringThickness, segs);
+            }
+            else if (clamped < 0m)
+            {
+                float tNeg = (float)((0m - clamped) / Math.Max(1e-8m, (0m - min))); // 0..1 relativo al lado izquierdo
+                tNeg = Math.Max(0f, Math.Min(1f, tNeg));
+                float startLeft = zeroAngle - tNeg * 90f; // -180 .. -90
+                DrawArc(ctx, cx, cy, radius, startLeft, zeroAngle, _gaugeProgressNegative, ringThickness, segs);
+            }
 
             // Marca del 0 (arriba)
             DrawArc(ctx, cx, cy, radius, -92, -88, _gaugeZeroTickColor, Math.Max(2, ringThickness - 2), 4);
@@ -1066,11 +1216,31 @@ namespace ATAS.Indicators.Technical
             int valH = MeasureSize(ctx, textVal, bigFont).Height;
             ctx.DrawString(textVal, bigFont, Color.White, cx - valW / 2, cy - valH - ringThickness - 4);
 
-            // Flecha dirección
-            string arrow = (val >= 0m) ? "▲" : "▼";
-            var arrColor = (val >= 0m) ? Color.FromArgb(60, 220, 120) : Color.FromArgb(240, 110, 110);
-            int arrW = MeasureText(ctx, arrow + textVal.Replace(metric.Unit ?? string.Empty, string.Empty), _fontNorm);
-            ctx.DrawString(arrow + " " + (value ?? 0m).ToString("0.###", CultureInfo.InvariantCulture), _fontNorm, arrColor, cx - arrW / 2, cy - ringThickness - 4);
+            // Flecha dirección opcional
+            if (_gaugeShowArrow)
+            {
+                string arrow = (val >= 0m) ? "▲" : "▼";
+                var arrColor = (val >= 0m) ? _gaugeProgressPositive : _gaugeProgressNegative;
+                int arrW = MeasureText(ctx, arrow, _fontNorm);
+                ctx.DrawString(arrow, _fontNorm, arrColor, cx - arrW / 2, cy - ringThickness - 4);
+            }
+
+            // Detalles opcionales (valor abs y %)
+            if (_gaugeShowDetails)
+            {
+                string details;
+                try
+                {
+                    var pctText = clamped == 0 ? "0%" : ((clamped - 0) / Math.Max(1e-8m, (max - min)) * 100m).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+                    details = pctText;
+                }
+                catch { details = string.Empty; }
+                if (!string.IsNullOrEmpty(details))
+                {
+                    int dw = MeasureText(ctx, details, _fontNorm);
+                    ctx.DrawString(details, _fontNorm, Color.Gainsboro, cx - dw / 2, cy - ringThickness - 4 - (_gaugeShowArrow ? MeasureSize(ctx, "A", _fontNorm).Height + 2 : 0));
+                }
+            }
         }
 
         private static void DrawTick(RenderContext ctx, int cx, int cy, int r, float angleDeg, Color color)
@@ -1191,38 +1361,36 @@ namespace ATAS.Indicators.Technical
 
         private (decimal? abs, decimal? pct) CalculateGexRates(Dictionary<string, string> map)
         {
-            // Net GEX actual: intentar varias claves comunes
-            var gexCurrKeys = new[] { "NetGEX", "Net Gex", "NetGex", "GEXNet", "GEX" };
-            string currRaw = null;
-            foreach (var k in gexCurrKeys)
+            // Usa las dos últimas lecturas persistidas del CSV con timestamps para normalizar a minutos
+            decimal? curr;
+            decimal? prev;
+            DateTime? tsCurr;
+            DateTime? tsPrev;
+            lock (_sync)
             {
-                if (map.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) { currRaw = v; break; }
+                curr = _gexCurr;
+                prev = _gexPrev;
+                tsCurr = _gexCurrTs;
+                tsPrev = _gexPrevTs;
             }
 
-            if (!TryParseNumber(currRaw ?? string.Empty, out var curr, out _, out _, out _))
+            if (!curr.HasValue || !prev.HasValue)
                 return (null, null);
 
-            var now = DateTime.UtcNow;
-
-            if (_lastGex.HasValue)
+            var diff = curr.Value - prev.Value;
+            // minutos transcurridos entre muestras; si no hay timestamp válido, asumimos 1 min
+            double minutes = 1d;
+            if (tsCurr.HasValue && tsPrev.HasValue)
             {
-                var minutes = (now - (_lastGexTime == DateTime.MinValue ? now : _lastGexTime)).TotalMinutes;
-                if (minutes > 0)
-                {
-                    var diff = curr - _lastGex.Value;
-                    var absPerMin = diff / (decimal)minutes;
-                    var denom = Math.Max(Math.Abs(_lastGex.Value), 1e-8m);
-                    var pctPerMin = (diff / denom) * (100m / (decimal)minutes);
-                    pctPerMin = Math.Max(-100m, Math.Min(100m, pctPerMin));
-                    _lastGex = curr;
-                    _lastGexTime = now;
-                    return (Math.Abs(absPerMin), pctPerMin);
-                }
+                var dt = (tsCurr.Value - tsPrev.Value).TotalMinutes;
+                if (dt > 1e-6) minutes = dt;
             }
 
-            _lastGex = curr;
-            _lastGexTime = now;
-            return (null, null);
+            var absPerMin = Math.Abs(diff) / (decimal)minutes;
+            var denom = Math.Max(Math.Abs(prev.Value), 1e-8m);
+            var pctPerMin = ((diff / denom) * 100m) / (decimal)minutes;
+            pctPerMin = Math.Max(-100m, Math.Min(100m, pctPerMin));
+            return (absPerMin, pctPerMin);
         }
 
         private (decimal? abs, decimal? pct) CalculateVannaRates(Dictionary<string, string> map)
@@ -1293,6 +1461,60 @@ namespace ATAS.Indicators.Technical
             var pctAvg = pctChanges.Average();
             // El usuario sugiere rango [-1,1] para skew enfocando en deltas pequeños, pero mantenemos %/min para el gauge
             return (absAvg, pctAvg);
+        }
+
+        private void InitFileWatcher()
+        {
+            try
+            {
+                lock (_fswSync)
+                {
+                    if (_fsw != null)
+                    {
+                        _fsw.EnableRaisingEvents = false;
+                        _fsw.Changed -= OnCsvChanged;
+                        _fsw.Created -= OnCsvChanged;
+                        _fsw.Renamed -= OnCsvRenamed;
+                        _fsw.Dispose();
+                        _fsw = null;
+                    }
+
+                    if (!_useFileWatcher || string.IsNullOrWhiteSpace(_csvPath) || !File.Exists(_csvPath))
+                        return;
+
+                    var dir = Path.GetDirectoryName(_csvPath);
+                    var file = Path.GetFileName(_csvPath);
+                    if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(file)) return;
+
+                    _fsw = new FileSystemWatcher(dir, file)
+                    {
+                        IncludeSubdirectories = false,
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName
+                    };
+                    _fsw.Changed += OnCsvChanged;
+                    _fsw.Created += OnCsvChanged;
+                    _fsw.Renamed += OnCsvRenamed;
+                    _fsw.EnableRaisingEvents = _useFileWatcher;
+                }
+            }
+            catch { }
+        }
+
+        private void OnCsvChanged(object sender, FileSystemEventArgs e)
+        {
+            var now = DateTime.UtcNow;
+            if ((now - _fswLastEventUtc).TotalMilliseconds < _fileWatcherDebounceMs) return;
+            _fswLastEventUtc = now;
+            _nextReadUtc = DateTime.MinValue;
+            _ = TryScheduleRead();
+        }
+
+        private void OnCsvRenamed(object sender, RenamedEventArgs e)
+        {
+            _csvPath = e.FullPath;
+            InitFileWatcher();
+            _nextReadUtc = DateTime.MinValue;
+            _ = TryScheduleRead();
         }
     }
 }
