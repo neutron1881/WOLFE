@@ -60,6 +60,9 @@ namespace ATAS.Indicators.Technical
         private int _rowPaddingY = 3;
         private int _headerHeightExtra = 4;
 
+        // NUEVO: disposición vertical de velocímetros (apila en una sola columna)
+        private bool _speedGaugesVertical = false;
+
         // Velocidad config
         private decimal _dexAbsMin = -50m;
         private decimal _dexAbsMax = 50m;
@@ -318,34 +321,37 @@ namespace ATAS.Indicators.Technical
         [Category("Borde"), Display(Name = "Mostrar borde", Order = 0)]
         public bool ShowBorder { get => _showBorder; set { if (value == _showBorder) return; _showBorder = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX abs/min - Min", Order = 0)]
+        [Category("Velocidad"), Display(Name = "Velocímetros en columna", Order = 0)]
+        public bool SpeedGaugesVertical { get => _speedGaugesVertical; set { if (_speedGaugesVertical == value) return; _speedGaugesVertical = value; RedrawChart(); } }
+
+        [Category("Velocidad"), Display(Name = "DEX abs/min - Min", Order = 1)]
         public decimal DexAbsMin { get => _dexAbsMin; set { _dexAbsMin = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX abs/min - Max", Order = 1)]
+        [Category("Velocidad"), Display(Name = "DEX abs/min - Max", Order = 2)]
         public decimal DexAbsMax { get => _dexAbsMax; set { _dexAbsMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX %/min - Min", Order = 2)]
+        [Category("Velocidad"), Display(Name = "DEX %/min - Min", Order = 3)]
         public decimal DexPctMin { get => _dexPctMin; set { _dexPctMin = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX %/min - Max", Order = 3)]
+        [Category("Velocidad"), Display(Name = "DEX %/min - Max", Order = 4)]
         public decimal DexPctMax { get => _dexPctMax; set { _dexPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "GEX %/min - Min", Order = 4)]
+        [Category("Velocidad"), Display(Name = "GEX %/min - Min", Order = 5)]
         public decimal GexPctMin { get => _gexPctMin; set { _gexPctMin = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "GEX %/min - Max", Order = 5)]
+        [Category("Velocidad"), Display(Name = "GEX %/min - Max", Order = 6)]
         public decimal GexPctMax { get => _gexPctMax; set { _gexPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Vanna %/min - Min", Order = 6)]
+        [Category("Velocidad"), Display(Name = "Vanna %/min - Min", Order = 7)]
         public decimal VannaPctMin { get => _vannaPctMin; set { _vannaPctMin = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Vanna %/min - Max", Order = 7)]
+        [Category("Velocidad"), Display(Name = "Vanna %/min - Max", Order = 8)]
         public decimal VannaPctMax { get => _vannaPctMax; set { _vannaPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Skew %/min - Min", Order = 8)]
+        [Category("Velocidad"), Display(Name = "Skew %/min - Min", Order = 9)]
         public decimal SkewPctMin { get => _skewPctMin; set { _skewPctMin = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Skew %/min - Max", Order = 9)]
+        [Category("Velocidad"), Display(Name = "Skew %/min - Max", Order = 10)]
         public decimal SkewPctMax { get => _skewPctMax; set { _skewPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Altura mínima panel (px)", Order = 10)]
+        [Category("Velocidad"), Display(Name = "Altura mínima panel (px)", Order = 11)]
         [Range(80, 300)]
         public int SpeedMinRowHeight { get => _speedMinRowHeight; set { _speedMinRowHeight = Math.Max(80, Math.Min(300, value)); RedrawChart(); } }
 
@@ -356,25 +362,25 @@ namespace ATAS.Indicators.Technical
         [Range(50, 5000)]
         public int FileWatcherDebounceMs { get => _fileWatcherDebounceMs; set { _fileWatcherDebounceMs = Math.Max(50, Math.Min(5000, value)); } }
 
-        [Category("Velocidad"), Display(Name = "Suavizado gauge (0-1)", Order = 11)]
+        [Category("Velocidad"), Display(Name = "Suavizado gauge (0-1)", Order = 12)]
         [Range(0.0, 0.9)]
         public decimal GaugeSmoothing { get => _gaugeSmoothing; set { _gaugeSmoothing = Math.Max(0m, Math.Min(0.9m, value)); } }
 
-        [Category("Velocidad"), Display(Name = "Mostrar flecha dirección", Order = 12)]
+        [Category("Velocidad"), Display(Name = "Mostrar flecha dirección", Order = 13)]
         public bool GaugeShowArrow { get => _gaugeShowArrow; set { _gaugeShowArrow = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Mostrar bandas", Order = 13)]
+        [Category("Velocidad"), Display(Name = "Mostrar bandas", Order = 14)]
         public bool GaugeShowBands { get => _gaugeShowBands; set { _gaugeShowBands = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Banda baja (% rango)", Order = 14)]
+        [Category("Velocidad"), Display(Name = "Banda baja (% rango)", Order = 15)]
         public decimal GaugeBandLow { get => _gaugeBandLow; set { _gaugeBandLow = Math.Max(0m, Math.Min(1m, value)); RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Banda alta (% rango)", Order = 15)]
+        [Category("Velocidad"), Display(Name = "Banda alta (% rango)", Order = 16)]
         public decimal GaugeBandHigh { get => _gaugeBandHigh; set { _gaugeBandHigh = Math.Max(0m, Math.Min(1m, value)); RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Color banda baja", Order = 16)]
+        [Category("Velocidad"), Display(Name = "Color banda baja", Order = 17)]
         public Color GaugeBandLowColor { get => _gaugeBandLowColor; set { _gaugeBandLowColor = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Color banda media", Order = 17)]
+        [Category("Velocidad"), Display(Name = "Color banda media", Order = 18)]
         public Color GaugeBandMidColor { get => _gaugeBandMidColor; set { _gaugeBandMidColor = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Color banda alta", Order = 18)]
+        [Category("Velocidad"), Display(Name = "Color banda alta", Order = 19)]
         public Color GaugeBandHighColor { get => _gaugeBandHighColor; set { _gaugeBandHighColor = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Mostrar detalles (abs/%)", Order = 19)]
+        [Category("Velocidad"), Display(Name = "Mostrar detalles (abs/%)", Order = 20)]
         public bool GaugeShowDetails { get => _gaugeShowDetails; set { _gaugeShowDetails = value; RedrawChart(); } }
         #endregion
 
@@ -878,22 +884,54 @@ namespace ATAS.Indicators.Technical
             int headerH = Math.Max(_baseFontSize + _headerHeightExtra + 4, headerTextH + _headerHeightExtra + 4);
 
             // Calcular ancho de columnas basado en contenido aproximado
-            int[] colWidths = new int[_sections.Count];
+            int[] sectionWidths = new int[_sections.Count];
             int totalWidth = 0;
+
+            // Detecta qué secciones son de velocímetro
+            bool IsSpeedMetric(Metric m) => m.Keys != null && (
+                m.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)) ||
+                m.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)) ||
+                m.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)) ||
+                m.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal))
+            );
+            bool IsSpeedSection(Section s) => s.Items != null && s.Items.Any(IsSpeedMetric);
+
+            var speedIndices = new List<int>();
+
             for (int c = 0; c < _sections.Count; c++)
             {
-                int w = MeasureText(context, _sections[c].Title, _fontHeader) + 20; // header base
+                var w = MeasureText(context, _sections[c].Title, _fontHeader) + 20; // header base
                 foreach (var m in _sections[c].Items)
                 {
-                    int wTitle = MeasureText(context, m.Title + "  ", _fontNorm);
+                    int wTitle = MeasureText(context, m.Title + " ", _fontNorm);
                     string tmpVal = GetValue(snapshot, m);
                     int wValue = MeasureText(context, tmpVal, _fontBold);
                     w = Math.Max(w, wTitle + wValue + 22);
                 }
-                colWidths[c] = Math.Max(160, Math.Min(420, w));
-                totalWidth += colWidths[c];
+                sectionWidths[c] = Math.Max(160, Math.Min(420, w));
+                if (IsSpeedSection(_sections[c]))
+                    speedIndices.Add(c);
             }
-            totalWidth += _columnGap * (_sections.Count - 1);
+
+            int numColumns;
+            int speedColumnWidth = 0;
+            if (_speedGaugesVertical && speedIndices.Count > 0)
+            {
+                speedColumnWidth = speedIndices.Select(i => sectionWidths[i]).Max();
+                numColumns = 1 + _sections.Select((s, idx) => new { s, idx }).Count(p => !speedIndices.Contains(p.idx));
+                totalWidth = speedColumnWidth + _sections.Select((s, idx) => new { s, idx })
+                    .Where(p => !speedIndices.Contains(p.idx))
+                    .Select(p => sectionWidths[p.idx])
+                    .Sum();
+            }
+            else
+            {
+                numColumns = _sections.Count;
+                totalWidth = sectionWidths.Sum();
+            }
+
+            if (numColumns > 0)
+                totalWidth += _columnGap * (numColumns - 1);
 
             int lastBar = CurrentBar - 1;
             int xLast = 800;
@@ -926,17 +964,45 @@ namespace ATAS.Indicators.Technical
             var (vannaAbs, vannaPct) = CalculateVannaRates(snapshot);
             var (ivSkewAbs, ivSkewPct) = CalculateIvSkewRates(snapshot);
 
-            // Dibujar columnas
-            int x = panelLeft;
+            // Dibujo con disposición opcional vertical para velocímetros
+            int currentX = panelLeft;
+            int speedColumnX = panelLeft;
+            int speedColumnY = panelTop;
+            bool speedStarted = false;
+            int lastSpeedIndex = speedIndices.Count > 0 ? speedIndices[^1] : -1;
+
             for (int c = 0; c < _sections.Count; c++)
             {
                 var sec = _sections[c];
-                int w = colWidths[c];
+                bool sectionIsSpeed = IsSpeedSection(sec);
+
+                int w;
+                int colTop;
+                int x;
+
+                if (_speedGaugesVertical && sectionIsSpeed && speedIndices.Count > 0)
+                {
+                    w = speedColumnWidth;
+                    if (!speedStarted)
+                    {
+                        speedStarted = true;
+                        speedColumnX = currentX;
+                        speedColumnY = panelTop;
+                    }
+                    x = speedColumnX;
+                    colTop = speedColumnY;
+                }
+                else
+                {
+                    w = sectionWidths[c];
+                    x = currentX;
+                    colTop = panelTop;
+                }
 
                 // Header
-                var headerRect = new Rectangle(x, panelTop, w, headerH);
+                var headerRect = new Rectangle(x, colTop, w, headerH);
                 context.FillRectangle(sec.HeaderColor, headerRect);
-                int headerY = panelTop + (headerH - headerTextH) / 2;
+                int headerY = colTop + (headerH - headerTextH) / 2;
                 int headerTextW = MeasureText(context, sec.Title, _fontHeader);
                 int headerX = x + (w - headerTextW) / 2; // centrado horizontal
                 context.DrawString($"{sec.Title}", _fontHeader, Color.White, headerX, headerY);
@@ -951,9 +1017,9 @@ namespace ATAS.Indicators.Technical
                 }
 
                 // Rows
-                int y = panelTop + headerH + 2;
+                int y = colTop + headerH + 2;
 
-                // Layout horizontal especial para VELOCIDAD
+                // Layout horizontal especial para VELOCIDAD (no usado actualmente)
                 if (sec.Title.Equals("VELOCIDAD", StringComparison.OrdinalIgnoreCase) && sec.Items.Length > 0)
                 {
                     int rowHVel = Math.Max(rowH, _speedMinRowHeight);
@@ -1094,11 +1160,26 @@ namespace ATAS.Indicators.Technical
                     }
                 }
 
-                // Col vertical
+                // Col/borde por sección
                 if (_showBorder)
-                    context.DrawRectangle(new RenderPen(_borderColor, 1), new Rectangle(x, panelTop, w, y - panelTop));
+                    context.DrawRectangle(new RenderPen(_borderColor, 1), new Rectangle(x, colTop, w, y - colTop));
 
-                x += w + _columnGap;
+                // Avance X según modalidad
+                if (_speedGaugesVertical && sectionIsSpeed)
+                {
+                    // apilar en misma columna
+                    speedColumnY = y; // siguiente sección de velocidad empieza debajo de la actual
+                    if (c == lastSpeedIndex)
+                    {
+                        // última de las de velocidad: ahora sí avanzamos X
+                        currentX += w + _columnGap;
+                    }
+                }
+                else
+                {
+                    // secciones normales: avanzan X como siempre
+                    currentX += w + _columnGap;
+                }
             }
         }
 
