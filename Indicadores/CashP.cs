@@ -32,12 +32,16 @@ namespace ATAS.Indicators.Technical
         private string _error = string.Empty;
         private DateTime? _lastLoad;
 
+        // Guardar valores previos por strike para dibujar marcadores
+        private Dictionary<decimal, (decimal calls, decimal puts)> _prevBySpy = new();
+        private Dictionary<decimal, (decimal calls, decimal puts)> _prevByStrike = new();
+
         // Precio ES en tiempo real (desde el gráfico)
         private decimal _lastEsPrice;
 
         // Settings
         private string _filePath = @"C:\\Path\\To\\SPY_Cash.csv";
-        [Display(GroupName = "1. Settings", Name = "CSV File Path", Order = 0)]
+        [Display(GroupName = "1. Settings", Name = "CSV File Path", Order =0)]
         public string FilePath
         {
             get => _filePath;
@@ -48,9 +52,9 @@ namespace ATAS.Indicators.Technical
             }
         }
 
-        private int _refreshSeconds = 60;
-        [Display(GroupName = "1. Settings", Name = "Refresh (sec)", Order = 1)]
-        [Range(5, 3600)]
+        private int _refreshSeconds =60;
+        [Display(GroupName = "1. Settings", Name = "Refresh (sec)", Order =1)]
+        [Range(5,3600)]
         public int RefreshSeconds
         {
             get => _refreshSeconds;
@@ -62,7 +66,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _useLatestTimestamp = true;
-        [Display(GroupName = "1. Settings", Name = "Use latest timestamp only", Order = 2)]
+        [Display(GroupName = "1. Settings", Name = "Use latest timestamp only", Order =2)]
         public bool UseLatestTimestamp
         {
             get => _useLatestTimestamp;
@@ -75,7 +79,7 @@ namespace ATAS.Indicators.Technical
 
         // Conversion Settings
         private bool _enableConversion;
-        [Display(GroupName = "1. Settings", Name = "Convert strike to ES", Order = 3)]
+        [Display(GroupName = "1. Settings", Name = "Convert strike to ES", Order =3)]
         public bool EnableConversion
         {
             get => _enableConversion;
@@ -83,7 +87,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _quotesCsvPath = string.Empty;
-        [Display(GroupName = "1. Settings", Name = "Quotes CSV (Timestamp, SPY, ES)", Order = 4)]
+        [Display(GroupName = "1. Settings", Name = "Quotes CSV (Timestamp, SPY, ES)", Order =4)]
         public string QuotesCsvPath
         {
             get => _quotesCsvPath;
@@ -91,7 +95,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _manualSpyPrice;
-        [Display(GroupName = "1. Settings", Name = "Manual SPY price", Order = 5)]
+        [Display(GroupName = "1. Settings", Name = "Manual SPY price", Order =5)]
         public decimal ManualSpyPrice
         {
             get => _manualSpyPrice;
@@ -99,33 +103,33 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _manualEsPrice;
-        [Display(GroupName = "1. Settings", Name = "Manual ES price", Order = 6)]
+        [Display(GroupName = "1. Settings", Name = "Manual ES price", Order =6)]
         public decimal ManualEsPrice
         {
             get => _manualEsPrice;
             set { _manualEsPrice = Math.Max(0, value); ForceReload(); }
         }
 
-        private decimal _priceStep = 0.25m;
-        [Display(GroupName = "1. Settings", Name = "Price step (rounding)", Order = 7)]
+        private decimal _priceStep =0.25m;
+        [Display(GroupName = "1. Settings", Name = "Price step (rounding)", Order =7)]
         public decimal PriceStep
         {
             get => _priceStep;
-            set { _priceStep = value <= 0 ? 0.25m : value; ForceReload(); }
+            set { _priceStep = value <=0 ?0.25m : value; ForceReload(); }
         }
 
         // Positioning
-        private int _centerOffsetPx = 0;
-        [Display(GroupName = "2. Position", Name = "Center offset (px)", Order = 20)]
-        [Range(-5000, 5000)]
+        private int _centerOffsetPx =0;
+        [Display(GroupName = "2. Position", Name = "Center offset (px)", Order =20)]
+        [Range(-5000,5000)]
         public int CenterOffsetPx
         {
             get => _centerOffsetPx;
-            set { _centerOffsetPx = Math.Clamp(value, -5000, 5000); RedrawChart(); }
+            set { _centerOffsetPx = Math.Clamp(value, -5000,5000); RedrawChart(); }
         }
 
         private bool _callsOnRight = true;
-        [Display(GroupName = "2. Position", Name = "Calls on right side", Order = 21)]
+        [Display(GroupName = "2. Position", Name = "Calls on right side", Order =21)]
         public bool CallsOnRight
         {
             get => _callsOnRight;
@@ -133,7 +137,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showCenterLine = true;
-        [Display(GroupName = "2. Position", Name = "Show center line", Order = 22)]
+        [Display(GroupName = "2. Position", Name = "Show center line", Order =22)]
         public bool ShowCenterLine
         {
             get => _showCenterLine;
@@ -141,43 +145,43 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _centerLineColor = Color.FromArgb(140, Color.Red);
-        [Display(GroupName = "2. Position", Name = "Center line color", Order = 23)]
+        [Display(GroupName = "2. Position", Name = "Center line color", Order =23)]
         public Color CenterLineColor
         {
             get => _centerLineColor;
             set { _centerLineColor = value; RedrawChart(); }
         }
 
-        private int _centerLineThickness = 1;
-        [Display(GroupName = "2. Position", Name = "Center line thickness", Order = 24)]
-        [Range(1, 10)]
+        private int _centerLineThickness =1;
+        [Display(GroupName = "2. Position", Name = "Center line thickness", Order =24)]
+        [Range(1,10)]
         public int CenterLineThickness
         {
             get => _centerLineThickness;
-            set { _centerLineThickness = Math.Clamp(value, 1, 10); RedrawChart(); }
+            set { _centerLineThickness = Math.Clamp(value,1,10); RedrawChart(); }
         }
 
         // Appearance
-        private int _maxBarWidthPx = 220;
-        [Display(GroupName = "3. Appearance", Name = "Max side width (px)", Order = 30)]
-        [Range(20, 1000)]
+        private int _maxBarWidthPx =220;
+        [Display(GroupName = "3. Appearance", Name = "Max side width (px)", Order =30)]
+        [Range(20,1000)]
         public int MaxBarWidthPx
         {
             get => _maxBarWidthPx;
-            set { _maxBarWidthPx = Math.Clamp(value, 20, 1000); RedrawChart(); }
+            set { _maxBarWidthPx = Math.Clamp(value,20,1000); RedrawChart(); }
         }
 
-        private int _barThicknessPx = 7;
-        [Display(GroupName = "3. Appearance", Name = "Bar thickness (px)", Order = 31)]
-        [Range(2, 50)]
+        private int _barThicknessPx =7;
+        [Display(GroupName = "3. Appearance", Name = "Bar thickness (px)", Order =31)]
+        [Range(2,50)]
         public int BarThicknessPx
         {
             get => _barThicknessPx;
-            set { _barThicknessPx = Math.Clamp(value, 2, 50); RedrawChart(); }
+            set { _barThicknessPx = Math.Clamp(value,2,50); RedrawChart(); }
         }
 
         private Color _callsColor = Color.DodgerBlue;
-        [Display(GroupName = "3. Appearance", Name = "Calls color", Order = 32)]
+        [Display(GroupName = "3. Appearance", Name = "Calls color", Order =32)]
         public Color CallsColor
         {
             get => _callsColor;
@@ -185,24 +189,24 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _putsColor = Color.IndianRed;
-        [Display(GroupName = "3. Appearance", Name = "Puts color", Order = 33)]
+        [Display(GroupName = "3. Appearance", Name = "Puts color", Order =33)]
         public Color PutsColor
         {
             get => _putsColor;
             set { _putsColor = value; RedrawChart(); }
         }
 
-        private int _fillOpacity = 140; // 0..255
-        [Display(GroupName = "3. Appearance", Name = "Fill opacity", Order = 34)]
-        [Range(0, 255)]
+        private int _fillOpacity =140; //0..255
+        [Display(GroupName = "3. Appearance", Name = "Fill opacity", Order =34)]
+        [Range(0,255)]
         public int FillOpacity
         {
             get => _fillOpacity;
-            set { _fillOpacity = Math.Clamp(value, 0, 255); RedrawChart(); }
+            set { _fillOpacity = Math.Clamp(value,0,255); RedrawChart(); }
         }
 
         private bool _showValues;
-        [Display(GroupName = "3. Appearance", Name = "Show side values", Order = 35)]
+        [Display(GroupName = "3. Appearance", Name = "Show side values", Order =35)]
         public bool ShowValues
         {
             get => _showValues;
@@ -210,7 +214,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _valueFormat = "0,0";
-        [Display(GroupName = "3. Appearance", Name = "Side value format", Order = 36)]
+        [Display(GroupName = "3. Appearance", Name = "Side value format", Order =36)]
         public string ValueFormat
         {
             get => _valueFormat;
@@ -219,7 +223,7 @@ namespace ATAS.Indicators.Technical
 
         // Strike labels next to side values (SPY)
         private bool _showCenterStrikes = true;
-        [Display(GroupName = "4. Strike labels", Name = "Show SPY strike next to values", Order = 40)]
+        [Display(GroupName = "4. Strike labels", Name = "Show SPY strike next to values", Order =40)]
         public bool ShowCenterStrikes
         {
             get => _showCenterStrikes;
@@ -227,113 +231,113 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _strikeFormat = "0"; // entero por defecto para formato (619)
-        [Display(GroupName = "4. Strike labels", Name = "SPY strike number format", Order = 41)]
+        [Display(GroupName = "4. Strike labels", Name = "SPY strike number format", Order =41)]
         public string StrikeFormat
         {
             get => _strikeFormat;
             set { _strikeFormat = value ?? string.Empty; RedrawChart(); }
         }
 
-        private int _strikeFontSize = 8;
-        [Display(GroupName = "4. Strike labels", Name = "Font size", Order = 42)]
-        [Range(6, 40)]
+        private int _strikeFontSize =8;
+        [Display(GroupName = "4. Strike labels", Name = "Font size", Order =42)]
+        [Range(6,40)]
         public int StrikeFontSize
         {
             get => _strikeFontSize;
-            set { _strikeFontSize = Math.Clamp(value, 6, 40); RedrawChart(); }
+            set { _strikeFontSize = Math.Clamp(value,6,40); RedrawChart(); }
         }
 
         private Color _strikeColor = Color.LightSteelBlue;
-        [Display(GroupName = "4. Strike labels", Name = "Color", Order = 43)]
+        [Display(GroupName = "4. Strike labels", Name = "Color", Order =43)]
         public Color StrikeColor
         {
             get => _strikeColor;
             set { _strikeColor = value; RedrawChart(); }
         }
 
-        private int _strikeLeftMarginPx = 10;
-        [Display(GroupName = "4. Strike labels", Name = "Left strike extra margin (px)", Order = 44)]
-        [Range(0, 300)]
+        private int _strikeLeftMarginPx =10;
+        [Display(GroupName = "4. Strike labels", Name = "Left strike extra margin (px)", Order =44)]
+        [Range(0,300)]
         public int StrikeLeftMarginPx
         {
             get => _strikeLeftMarginPx;
-            set { _strikeLeftMarginPx = Math.Clamp(value, 0, 300); RedrawChart(); }
+            set { _strikeLeftMarginPx = Math.Clamp(value,0,300); RedrawChart(); }
         }
 
-        private int _strikeRightMarginPx = 10;
-        [Display(GroupName = "4. Strike labels", Name = "Right strike extra margin (px)", Order = 45)]
-        [Range(0, 300)]
+        private int _strikeRightMarginPx =10;
+        [Display(GroupName = "4. Strike labels", Name = "Right strike extra margin (px)", Order =45)]
+        [Range(0,300)]
         public int StrikeRightMarginPx
         {
             get => _strikeRightMarginPx;
-            set { _strikeRightMarginPx = Math.Clamp(value, 0, 300); RedrawChart(); }
+            set { _strikeRightMarginPx = Math.Clamp(value,0,300); RedrawChart(); }
         }
 
         // Top summary panel (series style)
         private bool _showTopSummary = true;
-        [Display(GroupName = "5. Top summary", Name = "Show top summary", Order = 50)]
+        [Display(GroupName = "5. Top summary", Name = "Show top summary", Order =50)]
         public bool ShowTopSummary
         {
             get => _showTopSummary;
             set { _showTopSummary = value; RedrawChart(); }
         }
 
-        private int _topFontSize = 11;
-        [Display(GroupName = "5. Top summary", Name = "Font size", Order = 51)]
-        [Range(6, 60)]
+        private int _topFontSize =11;
+        [Display(GroupName = "5. Top summary", Name = "Font size", Order =51)]
+        [Range(6,60)]
         public int TopFontSize
         {
             get => _topFontSize;
-            set { _topFontSize = Math.Clamp(value, 6, 60); RedrawChart(); }
+            set { _topFontSize = Math.Clamp(value,6,60); RedrawChart(); }
         }
 
-        private int _topMarginPx = 6;
-        [Display(GroupName = "5. Top summary", Name = "Top margin (px)", Order = 52)]
-        [Range(0, 200)]
+        private int _topMarginPx =6;
+        [Display(GroupName = "5. Top summary", Name = "Top margin (px)", Order =52)]
+        [Range(0,200)]
         public int TopMarginPx
         {
             get => _topMarginPx;
-            set { _topMarginPx = Math.Clamp(value, 0, 200); RedrawChart(); }
+            set { _topMarginPx = Math.Clamp(value,0,200); RedrawChart(); }
         }
 
-        private int _summaryBarWidthPx = 240;
-        [Display(GroupName = "5. Top summary", Name = "Bar width (px)", Order = 53)]
-        [Range(60, 1000)]
+        private int _summaryBarWidthPx =240;
+        [Display(GroupName = "5. Top summary", Name = "Bar width (px)", Order =53)]
+        [Range(60,1000)]
         public int SummaryBarWidthPx
         {
             get => _summaryBarWidthPx;
-            set { _summaryBarWidthPx = Math.Clamp(value, 60, 1000); RedrawChart(); }
+            set { _summaryBarWidthPx = Math.Clamp(value,60,1000); RedrawChart(); }
         }
 
-        private int _summaryRowHeightPx = 12;
-        [Display(GroupName = "5. Top summary", Name = "Row height (px)", Order = 54)]
-        [Range(8, 40)]
+        private int _summaryRowHeightPx =12;
+        [Display(GroupName = "5. Top summary", Name = "Row height (px)", Order =54)]
+        [Range(8,40)]
         public int SummaryRowHeightPx
         {
             get => _summaryRowHeightPx;
-            set { _summaryRowHeightPx = Math.Clamp(value, 8, 40); RedrawChart(); }
+            set { _summaryRowHeightPx = Math.Clamp(value,8,40); RedrawChart(); }
         }
 
-        private int _summaryRowSpacingPx = 4;
-        [Display(GroupName = "5. Top summary", Name = "Row spacing (px)", Order = 55)]
-        [Range(0, 40)]
+        private int _summaryRowSpacingPx =4;
+        [Display(GroupName = "5. Top summary", Name = "Row spacing (px)", Order =55)]
+        [Range(0,40)]
         public int SummaryRowSpacingPx
         {
             get => _summaryRowSpacingPx;
-            set { _summaryRowSpacingPx = Math.Clamp(value, 0, 40); RedrawChart(); }
+            set { _summaryRowSpacingPx = Math.Clamp(value,0,40); RedrawChart(); }
         }
 
-        private int _summaryLabelWidthPx = 110;
-        [Display(GroupName = "5. Top summary", Name = "Label width (px)", Order = 56)]
-        [Range(50, 300)]
+        private int _summaryLabelWidthPx =110;
+        [Display(GroupName = "5. Top summary", Name = "Label width (px)", Order =56)]
+        [Range(50,300)]
         public int SummaryLabelWidthPx
         {
             get => _summaryLabelWidthPx;
-            set { _summaryLabelWidthPx = Math.Clamp(value, 50, 300); RedrawChart(); }
+            set { _summaryLabelWidthPx = Math.Clamp(value,50,300); RedrawChart(); }
         }
 
-        private Color _summaryBackBar = Color.FromArgb(80, 120, 120, 120);
-        [Display(GroupName = "5. Top summary", Name = "Back bar color", Order = 57)]
+        private Color _summaryBackBar = Color.FromArgb(80,120,120,120);
+        [Display(GroupName = "5. Top summary", Name = "Back bar color", Order =57)]
         public Color SummaryBackBar
         {
             get => _summaryBackBar;
@@ -341,7 +345,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _summaryCallsColor = Color.DodgerBlue;
-        [Display(GroupName = "5. Top summary", Name = "Calls bar color", Order = 58)]
+        [Display(GroupName = "5. Top summary", Name = "Calls bar color", Order =58)]
         public Color SummaryCallsColor
         {
             get => _summaryCallsColor;
@@ -349,7 +353,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _summaryPutsColor = Color.IndianRed;
-        [Display(GroupName = "5. Top summary", Name = "Puts bar color", Order = 59)]
+        [Display(GroupName = "5. Top summary", Name = "Puts bar color", Order =59)]
         public Color SummaryPutsColor
         {
             get => _summaryPutsColor;
@@ -357,7 +361,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _summaryTotalColor = Color.SteelBlue;
-        [Display(GroupName = "5. Top summary", Name = "Total bar color (fallback)", Order = 60)]
+        [Display(GroupName = "5. Top summary", Name = "Total bar color (fallback)", Order =60)]
         public Color SummaryTotalColor
         {
             get => _summaryTotalColor;
@@ -365,7 +369,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _summaryTextColor = Color.White;
-        [Display(GroupName = "5. Top summary", Name = "Text color", Order = 61)]
+        [Display(GroupName = "5. Top summary", Name = "Text color", Order =61)]
         public Color SummaryTextColor
         {
             get => _summaryTextColor;
@@ -374,7 +378,7 @@ namespace ATAS.Indicators.Technical
 
         // Mostrar SPY implícado centrado
         private bool _showSpyCurrent = true;
-        [Display(GroupName = "5. Top summary", Name = "Show implied SPY below", Order = 62)]
+        [Display(GroupName = "5. Top summary", Name = "Show implied SPY below", Order =62)]
         public bool ShowSpyCurrent
         {
             get => _showSpyCurrent;
@@ -382,7 +386,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _spyValueFormat = "0.00";
-        [Display(GroupName = "5. Top summary", Name = "SPY value format", Order = 63)]
+        [Display(GroupName = "5. Top summary", Name = "SPY value format", Order =63)]
         public string SpyValueFormat
         {
             get => _spyValueFormat;
@@ -390,7 +394,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _useChartEs = true;
-        [Display(GroupName = "5. Top summary", Name = "Use chart price as ES", Order = 64)]
+        [Display(GroupName = "5. Top summary", Name = "Use chart price as ES", Order =64)]
         public bool UseChartPriceAsES
         {
             get => _useChartEs;
@@ -399,32 +403,32 @@ namespace ATAS.Indicators.Technical
 
         // Strike horizontal lines
         private bool _showStrikeLines = false;
-        [Display(GroupName = "6. Strike lines", Name = "Show strike lines", Order = 70)]
+        [Display(GroupName = "6. Strike lines", Name = "Show strike lines", Order =70)]
         public bool ShowStrikeLines
         {
             get => _showStrikeLines;
             set { _showStrikeLines = value; RedrawChart(); }
         }
 
-        private Color _strikeLineColor = Color.FromArgb(60, 200, 200, 200);
-        [Display(GroupName = "6. Strike lines", Name = "Line color", Order = 71)]
+        private Color _strikeLineColor = Color.FromArgb(60,200,200,200);
+        [Display(GroupName = "6. Strike lines", Name = "Line color", Order =71)]
         public Color StrikeLineColor
         {
             get => _strikeLineColor;
             set { _strikeLineColor = value; RedrawChart(); }
         }
 
-        private int _strikeLineThickness = 1;
-        [Display(GroupName = "6. Strike lines", Name = "Thickness", Order = 72)]
-        [Range(1, 10)]
+        private int _strikeLineThickness =1;
+        [Display(GroupName = "6. Strike lines", Name = "Thickness", Order =72)]
+        [Range(1,10)]
         public int StrikeLineThickness
         {
             get => _strikeLineThickness;
-            set { _strikeLineThickness = Math.Clamp(value, 1, 10); RedrawChart(); }
+            set { _strikeLineThickness = Math.Clamp(value,1,10); RedrawChart(); }
         }
 
         private DashStyle _strikeLineDash = DashStyle.Solid;
-        [Display(GroupName = "6. Strike lines", Name = "Dash style", Order = 73)]
+        [Display(GroupName = "6. Strike lines", Name = "Dash style", Order =73)]
         public DashStyle StrikeLineDash
         {
             get => _strikeLineDash;
@@ -433,7 +437,7 @@ namespace ATAS.Indicators.Technical
 
         // Max lines (dominant strikes)
         private bool _showMaxCallsLine = true;
-        [Display(GroupName = "7. Max lines", Name = "Show Max Calls line", Order = 80)]
+        [Display(GroupName = "7. Max lines", Name = "Show Max Calls line", Order =80)]
         public bool ShowMaxCallsLine
         {
             get => _showMaxCallsLine;
@@ -441,7 +445,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMaxPutsLine = true;
-        [Display(GroupName = "7. Max lines", Name = "Show Max Puts line", Order = 81)]
+        [Display(GroupName = "7. Max lines", Name = "Show Max Puts line", Order =81)]
         public bool ShowMaxPutsLine
         {
             get => _showMaxPutsLine;
@@ -449,7 +453,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _maxCallsLineColor = Color.DodgerBlue;
-        [Display(GroupName = "7. Max lines", Name = "Max Calls color", Order = 82)]
+        [Display(GroupName = "7. Max lines", Name = "Max Calls color", Order =82)]
         public Color MaxCallsLineColor
         {
             get => _maxCallsLineColor;
@@ -457,24 +461,24 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _maxPutsLineColor = Color.IndianRed;
-        [Display(GroupName = "7. Max lines", Name = "Max Puts color", Order = 83)]
+        [Display(GroupName = "7. Max lines", Name = "Max Puts color", Order =83)]
         public Color MaxPutsLineColor
         {
             get => _maxPutsLineColor;
             set { _maxPutsLineColor = value; RedrawChart(); }
         }
 
-        private int _maxLinesThickness = 2;
-        [Display(GroupName = "7. Max lines", Name = "Max lines thickness", Order = 84)]
-        [Range(1, 20)]
+        private int _maxLinesThickness =2;
+        [Display(GroupName = "7. Max lines", Name = "Max lines thickness", Order =84)]
+        [Range(1,20)]
         public int MaxLinesThickness
         {
             get => _maxLinesThickness;
-            set { _maxLinesThickness = Math.Clamp(value, 1, 20); RedrawChart(); }
+            set { _maxLinesThickness = Math.Clamp(value,1,20); RedrawChart(); }
         }
 
         private DashStyle _maxLinesDash = DashStyle.Solid;
-        [Display(GroupName = "7. Max lines", Name = "Max lines dash style", Order = 85)]
+        [Display(GroupName = "7. Max lines", Name = "Max lines dash style", Order =85)]
         public DashStyle MaxLinesDash
         {
             get => _maxLinesDash;
@@ -483,33 +487,33 @@ namespace ATAS.Indicators.Technical
 
         // Net levels (Calls - Puts) por strike
         private bool _showNetLevels = true;
-        [Display(GroupName = "8. Net levels", Name = "Show net levels (Calls-Puts)", Order = 90)]
+        [Display(GroupName = "8. Net levels", Name = "Show net levels (Calls-Puts)", Order =90)]
         public bool ShowNetLevels
         {
             get => _showNetLevels;
             set { _showNetLevels = value; RedrawChart(); }
         }
 
-        private int _netThicknessPx = 9;
-        [Display(GroupName = "8. Net levels", Name = "Net level thickness (px)", Order = 91)]
-        [Range(2, 60)]
+        private int _netThicknessPx =9;
+        [Display(GroupName = "8. Net levels", Name = "Net level thickness (px)", Order =91)]
+        [Range(2,60)]
         public int NetThicknessPx
         {
             get => _netThicknessPx;
-            set { _netThicknessPx = Math.Clamp(value, 2, 60); RedrawChart(); }
+            set { _netThicknessPx = Math.Clamp(value,2,60); RedrawChart(); }
         }
 
-        private int _netOpacity = 200;
-        [Display(GroupName = "8. Net levels", Name = "Net level opacity", Order = 92)]
-        [Range(0, 255)]
+        private int _netOpacity =200;
+        [Display(GroupName = "8. Net levels", Name = "Net level opacity", Order =92)]
+        [Range(0,255)]
         public int NetOpacity
         {
             get => _netOpacity;
-            set { _netOpacity = Math.Clamp(value, 0, 255); RedrawChart(); }
+            set { _netOpacity = Math.Clamp(value,0,255); RedrawChart(); }
         }
 
         private Color _netCallsColor = Color.DodgerBlue;
-        [Display(GroupName = "8. Net levels", Name = "Net Calls color", Order = 93)]
+        [Display(GroupName = "8. Net levels", Name = "Net Calls color", Order =93)]
         public Color NetCallsColor
         {
             get => _netCallsColor;
@@ -517,11 +521,55 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _netPutsColor = Color.IndianRed;
-        [Display(GroupName = "8. Net levels", Name = "Net Puts color", Order = 94)]
+        [Display(GroupName = "8. Net levels", Name = "Net Puts color", Order =94)]
         public Color NetPutsColor
         {
             get => _netPutsColor;
             set { _netPutsColor = value; RedrawChart(); }
+        }
+
+        // Previous value markers (for last snapshot)
+        public enum PrevMarkerMode { Calls, Puts, Both }
+        private bool _showPrevMarkers = false;
+        private PrevMarkerMode _prevMarkerMode = PrevMarkerMode.Calls;
+        private int _prevMarkerSize =6;
+        private Color _prevMarkerCallsColor = Color.LightSkyBlue;
+        private Color _prevMarkerPutsColor = Color.Salmon;
+
+        [Display(GroupName = "9. Previous markers", Name = "Show previous markers", Order =100)]
+        public bool ShowPreviousMarkers
+        {
+            get => _showPrevMarkers;
+            set { _showPrevMarkers = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "9. Previous markers", Name = "Marker mode", Order =101)]
+        public PrevMarkerMode PreviousMarkerMode
+        {
+            get => _prevMarkerMode;
+            set { _prevMarkerMode = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "9. Previous markers", Name = "Marker size (px)", Order =102)]
+        [Range(2,20)]
+        public int PreviousMarkerSize
+        {
+            get => _prevMarkerSize;
+            set { _prevMarkerSize = Math.Clamp(value,2,20); RedrawChart(); }
+        }
+
+        [Display(GroupName = "9. Previous markers", Name = "Calls marker color", Order =103)]
+        public Color PreviousMarkerCallsColor
+        {
+            get => _prevMarkerCallsColor;
+            set { _prevMarkerCallsColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "9. Previous markers", Name = "Puts marker color", Order =104)]
+        public Color PreviousMarkerPutsColor
+        {
+            get => _prevMarkerPutsColor;
+            set { _prevMarkerPutsColor = value; RedrawChart(); }
         }
 
         public CashProfile()
@@ -550,7 +598,7 @@ namespace ATAS.Indicators.Technical
         {
             if (ChartInfo?.PriceChartContainer == null)
             {
-                context.DrawString("Chart not ready", new RenderFont("Arial", 10), Color.Red, 10, 10);
+                context.DrawString("Chart not ready", new RenderFont("Arial",10), Color.Red,10,10);
                 return;
             }
 
@@ -559,18 +607,24 @@ namespace ATAS.Indicators.Technical
             var fullWidth = ChartInfo.Region.Width;
 
             List<StrikeRow> snapshot;
+            Dictionary<decimal, (decimal calls, decimal puts)> prevBySpy;
+            Dictionary<decimal, (decimal calls, decimal puts)> prevByStrike;
             lock (_sync)
+            {
                 snapshot = _rows.ToList();
+                prevBySpy = new Dictionary<decimal, (decimal calls, decimal puts)>(_prevBySpy);
+                prevByStrike = new Dictionary<decimal, (decimal calls, decimal puts)>(_prevByStrike);
+            }
 
             if (!string.IsNullOrEmpty(_error))
             {
-                context.DrawString(_error, new RenderFont("Arial", 10), Color.Red, 10, 10);
+                context.DrawString(_error, new RenderFont("Arial",10), Color.Red,10,10);
             }
 
-            if (snapshot.Count == 0)
+            if (snapshot.Count ==0)
             {
                 if (string.IsNullOrEmpty(_error))
-                    context.DrawString("No data", new RenderFont("Arial", 10), Color.Gray, 10, 10);
+                    context.DrawString("No data", new RenderFont("Arial",10), Color.Gray,10,10);
                 return;
             }
 
@@ -578,7 +632,7 @@ namespace ATAS.Indicators.Technical
             var maxCalls = snapshot.Max(r => (double)r.Calls);
             var maxPuts = snapshot.Max(r => (double)r.Puts);
             var maxSide = Math.Max(maxCalls, maxPuts);
-            if (maxSide <= 0)
+            if (maxSide <=0)
                 return;
 
             var scale = MaxBarWidthPx / maxSide; // px per unit for each side
@@ -589,16 +643,16 @@ namespace ATAS.Indicators.Technical
             if (_showCenterLine)
             {
                 var pen = new RenderPen(_centerLineColor, _centerLineThickness);
-                context.DrawLine(pen, xCenter, 0, xCenter, ChartInfo.Region.Height);
+                context.DrawLine(pen, xCenter,0, xCenter, ChartInfo.Region.Height);
             }
 
-            var sideFont = new RenderFont("Arial", 8);
+            var sideFont = new RenderFont("Arial",8);
             var strikeFont = new RenderFont("Arial", _strikeFontSize);
 
             foreach (var row in snapshot)
             {
                 var y = ChartInfo.PriceChartContainer.GetYByPrice(row.Strike, false);
-                var top = y - _barThicknessPx / 2;
+                var top = y - _barThicknessPx /2;
 
                 var callsW = (int)Math.Round((double)row.Calls * scale);
                 var putsW = (int)Math.Round((double)row.Puts * scale);
@@ -613,34 +667,70 @@ namespace ATAS.Indicators.Technical
                 if (ShowStrikeLines)
                 {
                     var spen = new RenderPen(_strikeLineColor, _strikeLineThickness) { DashStyle = _strikeLineDash };
-                    context.DrawLine(spen, 0, y, fullWidth, y);
+                    context.DrawLine(spen,0, y, fullWidth, y);
                 }
 
                 // Left segment
-                if (leftW > 0)
+                if (leftW >0)
                 {
                     var rectL = new Rectangle(xCenter - leftW, top, leftW, _barThicknessPx);
                     context.FillRectangle(Color.FromArgb(_fillOpacity, leftColor), rectL);
                 }
                 // Right segment
-                if (rightW > 0)
+                if (rightW >0)
                 {
                     var rectR = new Rectangle(xCenter, top, rightW, _barThicknessPx);
                     context.FillRectangle(Color.FromArgb(_fillOpacity, rightColor), rectR);
+                }
+
+                // Previous markers (tip position of previous snapshot)
+                if (_showPrevMarkers)
+                {
+                    // Try match by SPY strike first (stable), then by positioned strike
+                    (decimal prevCalls, decimal prevPuts) prev;
+                    if (!prevBySpy.TryGetValue(row.StrikeSpy, out prev))
+                        prevByStrike.TryGetValue(row.Strike, out prev);
+
+                    // Calls marker (on the calls side)
+                    if (_prevMarkerMode == PrevMarkerMode.Calls || _prevMarkerMode == PrevMarkerMode.Both)
+                    {
+                        var prevCallsW = (int)Math.Round((double)prev.prevCalls * scale);
+                        if (prev.prevCalls >0 && prevCallsW >=0)
+                        {
+                            int size = _prevMarkerSize;
+                            int mx = _callsOnRight ? (xCenter + prevCallsW) : (xCenter - prevCallsW);
+                            int my = y;
+                            var mRect = new Rectangle(mx - size /2, my - size /2, size, size);
+                            context.FillRectangle(_prevMarkerCallsColor, mRect);
+                        }
+                    }
+                    // Puts marker (on the puts side)
+                    if (_prevMarkerMode == PrevMarkerMode.Puts || _prevMarkerMode == PrevMarkerMode.Both)
+                    {
+                        var prevPutsW = (int)Math.Round((double)prev.prevPuts * scale);
+                        if (prev.prevPuts >0 && prevPutsW >=0)
+                        {
+                            int size = _prevMarkerSize;
+                            int mx = _callsOnRight ? (xCenter - prevPutsW) : (xCenter + prevPutsW);
+                            int my = y;
+                            var mRect = new Rectangle(mx - size /2, my - size /2, size, size);
+                            context.FillRectangle(_prevMarkerPutsColor, mRect);
+                        }
+                    }
                 }
 
                 // Net level (Calls - Puts)
                 if (_showNetLevels)
                 {
                     var diff = row.Calls - row.Puts;
-                    if (diff != 0)
+                    if (diff !=0)
                     {
                         int w = (int)Math.Round((double)Math.Abs(diff) * scale);
-                        if (w > 0)
+                        if (w >0)
                         {
                             int t = _netThicknessPx;
-                            int topNet = y - t / 2;
-                            if (diff > 0)
+                            int topNet = y - t /2;
+                            if (diff >0)
                             {
                                 // Calls dominan -> dibujar hacia el lado Calls
                                 if (_callsOnRight)
@@ -654,7 +744,7 @@ namespace ATAS.Indicators.Technical
                                     context.FillRectangle(Color.FromArgb(_netOpacity, _netCallsColor), r);
                                 }
                             }
-                            else // diff < 0 -> Puts dominan
+                            else // diff <0 -> Puts dominan
                             {
                                 if (_callsOnRight)
                                 {
@@ -675,12 +765,12 @@ namespace ATAS.Indicators.Technical
                 if (_showValues)
                 {
                     // left value
-                    if (leftW > 0)
+                    if (leftW >0)
                     {
                         var valTxt = (_callsOnRight ? row.Puts : row.Calls).ToString(_valueFormat, CultureInfo.InvariantCulture);
                         int valW = EstimateTextWidth(valTxt, sideFont);
-                        int valX = xCenter - leftW - valW - 6;
-                        int valY = top - 2;
+                        int valX = xCenter - leftW - valW -6;
+                        int valY = top -2;
                         context.DrawString(valTxt, sideFont, leftColor, valX, valY);
 
                         if (_showCenterStrikes)
@@ -688,17 +778,17 @@ namespace ATAS.Indicators.Technical
                             var sTxt = $"({row.StrikeSpy.ToString(_strikeFormat, CultureInfo.InvariantCulture)})";
                             int sW = EstimateTextWidth(sTxt, strikeFont);
                             int sx = valX - sW - _strikeLeftMarginPx; // a la izquierda del valor con margen configurable
-                            int sy = y - (_strikeFontSize / 2) - 1;
+                            int sy = y - (_strikeFontSize /2) -1;
                             context.DrawString(sTxt, strikeFont, _strikeColor, sx, sy);
                         }
                     }
 
                     // right value
-                    if (rightW > 0)
+                    if (rightW >0)
                     {
                         var valTxt = (_callsOnRight ? row.Calls : row.Puts).ToString(_valueFormat, CultureInfo.InvariantCulture);
-                        int valX = xCenter + rightW + 6;
-                        int valY = top - 2;
+                        int valX = xCenter + rightW +6;
+                        int valY = top -2;
                         context.DrawString(valTxt, sideFont, rightColor, valX, valY);
 
                         if (_showCenterStrikes)
@@ -706,7 +796,7 @@ namespace ATAS.Indicators.Technical
                             int valW = EstimateTextWidth(valTxt, sideFont);
                             var sTxt = $"({row.StrikeSpy.ToString(_strikeFormat, CultureInfo.InvariantCulture)})";
                             int sx = valX + valW + _strikeRightMarginPx; // a la derecha del valor con margen configurable
-                            int sy = y - (_strikeFontSize / 2) - 1;
+                            int sy = y - (_strikeFontSize /2) -1;
                             context.DrawString(sTxt, strikeFont, _strikeColor, sx, sy);
                         }
                     }
@@ -717,27 +807,27 @@ namespace ATAS.Indicators.Technical
                 DrawTopSummary(context, xCenter, snapshot);
 
             // Max lines
-            if (snapshot.Count > 0)
+            if (snapshot.Count >0)
             {
                 var maxCallsRow = snapshot.OrderByDescending(r => r.Calls).FirstOrDefault();
                 var maxPutsRow = snapshot.OrderByDescending(r => r.Puts).FirstOrDefault();
-                if (_showMaxCallsLine && maxCallsRow != null && maxCallsRow.Calls > 0)
+                if (_showMaxCallsLine && maxCallsRow != null && maxCallsRow.Calls >0)
                 {
                     var yC = ChartInfo.PriceChartContainer.GetYByPrice(maxCallsRow.Strike, false);
                     var penC = new RenderPen(_maxCallsLineColor, _maxLinesThickness) { DashStyle = _maxLinesDash };
-                    context.DrawLine(penC, 0, yC, fullWidth, yC);
+                    context.DrawLine(penC,0, yC, fullWidth, yC);
                 }
-                if (_showMaxPutsLine && maxPutsRow != null && maxPutsRow.Puts > 0)
+                if (_showMaxPutsLine && maxPutsRow != null && maxPutsRow.Puts >0)
                 {
                     var yP = ChartInfo.PriceChartContainer.GetYByPrice(maxPutsRow.Strike, false);
                     var penP = new RenderPen(_maxPutsLineColor, _maxLinesThickness) { DashStyle = _maxLinesDash };
-                    context.DrawLine(penP, 0, yP, fullWidth, yP);
+                    context.DrawLine(penP,0, yP, fullWidth, yP);
                 }
             }
 
             if (_lastLoad.HasValue)
             {
-                context.DrawString($"Last load: {_lastLoad.Value:HH:mm:ss}", new RenderFont("Arial", 8), Color.Gray, 10, 26);
+                context.DrawString($"Last load: {_lastLoad.Value:HH:mm:ss}", new RenderFont("Arial",8), Color.Gray,10,26);
             }
         }
 
@@ -754,9 +844,9 @@ namespace ATAS.Indicators.Technical
             int labelW = _summaryLabelWidthPx;
 
             // Origen X: bloque centrado en la línea
-            int xBar = xCenter - barW / 2;
-            int xLabel = xBar - labelW - 8;
-            int xRightText = xBar + barW + 8;
+            int xBar = xCenter - barW /2;
+            int xLabel = xBar - labelW -8;
+            int xRightText = xBar + barW +8;
 
             int y = _topMarginPx;
 
@@ -764,22 +854,22 @@ namespace ATAS.Indicators.Technical
             void DrawRow(string label, decimal value, Color color, decimal total)
             {
                 // etiqueta izquierda
-                context.DrawString(label, font, SummaryTextColor, xLabel, y + (rowH - _topFontSize) / 2);
+                context.DrawString(label, font, SummaryTextColor, xLabel, y + (rowH - _topFontSize) /2);
 
                 // barra de fondo
                 var back = _summaryBackBar;
                 context.FillRectangle(back, new Rectangle(xBar, y, barW, rowH));
 
                 // barra de valor proporcional
-                double ratio = (total > 0 ? (double)(value / total) : 0.0);
-                ratio = Math.Clamp(ratio, 0.0, 1.0);
+                double ratio = (total >0 ? (double)(value / total) :0.0);
+                ratio = Math.Clamp(ratio,0.0,1.0);
                 int valW = (int)Math.Round(barW * ratio);
-                if (valW > 0)
+                if (valW >0)
                     context.FillRectangle(color, new Rectangle(xBar, y, valW, rowH));
 
                 // texto derecha: valor compacto y %
-                var valTxt = $"{FormatCompact(value)} ({Math.Round(ratio * 100)}%)";
-                context.DrawString(valTxt, font, SummaryTextColor, xRightText, y + (rowH - _topFontSize) / 2);
+                var valTxt = $"{FormatCompact(value)} ({Math.Round(ratio *100)}%)";
+                context.DrawString(valTxt, font, SummaryTextColor, xRightText, y + (rowH - _topFontSize) /2);
 
                 y += rowH + gap;
             }
@@ -789,35 +879,35 @@ namespace ATAS.Indicators.Technical
 
             // TOTAL: color del dominante (Calls o Puts). Si iguales, usar color fallback.
             Color totalColor = sumCalls > sumPuts ? _summaryCallsColor : (sumPuts > sumCalls ? _summaryPutsColor : _summaryTotalColor);
-            DrawRow("TOTAL $$$", sumTotal, totalColor, sumTotal <= 0 ? 1 : sumTotal);
+            DrawRow("TOTAL $$$", sumTotal, totalColor, sumTotal <=0 ?1 : sumTotal);
 
             // SPY implicado centrado debajo del panel superior (ratio = ManualES / ManualSPY)
             if (_showSpyCurrent)
             {
                 // Precio ES en tiempo real (gráfico)
-                decimal esNow = _useChartEs && _lastEsPrice > 0 ? _lastEsPrice : 0m;
-                if (esNow <= 0 && !string.IsNullOrWhiteSpace(_quotesCsvPath) && File.Exists(_quotesCsvPath))
+                decimal esNow = _useChartEs && _lastEsPrice >0 ? _lastEsPrice :0m;
+                if (esNow <=0 && !string.IsNullOrWhiteSpace(_quotesCsvPath) && File.Exists(_quotesCsvPath))
                 {
                     // fallback a último ES del CSV de quotes
-                    if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyQ, out var esQ) && esQ > 0)
+                    if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyQ, out var esQ) && esQ >0)
                         esNow = esQ;
                 }
 
-                if (esNow > 0)
+                if (esNow >0)
                 {
-                    decimal ratio = 0m;
-                    if (_manualEsPrice > 0 && _manualSpyPrice > 0)
+                    decimal ratio =0m;
+                    if (_manualEsPrice >0 && _manualSpyPrice >0)
                         ratio = SafeDiv(_manualEsPrice, _manualSpyPrice);
-                    else if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyL, out var esL) && spyL > 0)
+                    else if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyL, out var esL) && spyL >0)
                         ratio = SafeDiv(esL, spyL);
-                    if (ratio <= 0) ratio = 1m;
+                    if (ratio <=0) ratio =1m;
 
                     var spyNow = SafeDiv(esNow, ratio);
                     var text = $"SPY: {spyNow.ToString(_spyValueFormat, CultureInfo.InvariantCulture)}";
                     int textW = EstimateTextWidth(text, font);
-                    int cx = xCenter - textW / 2;
+                    int cx = xCenter - textW /2;
                     int spyY = y;
-                    context.DrawString(text, font, SummaryTextColor, cx, spyY + (rowH - _topFontSize) / 2);
+                    context.DrawString(text, font, SummaryTextColor, cx, spyY + (rowH - _topFontSize) /2);
                     y += rowH + gap;
                 }
             }
@@ -825,16 +915,16 @@ namespace ATAS.Indicators.Technical
 
         private bool TryGetLatestSpyEsFromQuotes(string path, out decimal spy, out decimal es)
         {
-            spy = 0m; es = 0m;
+            spy =0m; es =0m;
             try
             {
                 var lines = File.ReadAllLines(path);
-                if (lines.Length <= 1) return false;
+                if (lines.Length <=1) return false;
                 var headers = SplitCsvLine(lines[0]);
                 int idxSpy = FindIndex(headers, "spy");
                 int idxEs = FindIndex(headers, "es");
-                if (idxSpy < 0 || idxEs < 0) return false;
-                for (int i = lines.Length - 1; i >= 1; i--)
+                if (idxSpy <0 || idxEs <0) return false;
+                for (int i = lines.Length -1; i >=1; i--)
                 {
                     var line = lines[i];
                     if (string.IsNullOrWhiteSpace(line)) continue;
@@ -853,20 +943,20 @@ namespace ATAS.Indicators.Technical
             var abs = Math.Abs(value);
             string suffix;
             decimal num;
-            if (abs >= 1_000_000_000m)
+            if (abs >=1_000_000_000m)
             {
                 suffix = "B";
-                num = value / 1_000_000_000m;
+                num = value /1_000_000_000m;
             }
-            else if (abs >= 1_000_000m)
+            else if (abs >=1_000_000m)
             {
                 suffix = "M";
-                num = value / 1_000_000m;
+                num = value /1_000_000m;
             }
-            else if (abs >= 1_000m)
+            else if (abs >=1_000m)
             {
                 suffix = "K";
-                num = value / 1_000m;
+                num = value /1_000m;
             }
             else
             {
@@ -880,14 +970,14 @@ namespace ATAS.Indicators.Technical
         {
             if (string.IsNullOrEmpty(text)) return 0;
             // Heurística aproximada
-            double factor = 0.58;
+            double factor =0.58;
             return (int)Math.Ceiling(text.Length * (font.Size * factor));
         }
 
         private void ResetTimer()
         {
             _timer.Stop();
-            _timer.Interval = Math.Max(5, _refreshSeconds) * 1000;
+            _timer.Interval = Math.Max(5, _refreshSeconds) *1000;
             _timer.Start();
         }
 
@@ -906,10 +996,21 @@ namespace ATAS.Indicators.Technical
         {
             try
             {
+                // Capturar snapshot previo para marcadores
+                List<StrikeRow> prevSnapshot;
+                lock (_sync)
+                {
+                    prevSnapshot = _rows.ToList();
+                }
+                var prevBySpyLocal = prevSnapshot.ToDictionary(r => r.StrikeSpy, r => (r.Calls, r.Puts));
+                var prevByStrikeLocal = prevSnapshot.ToDictionary(r => r.Strike, r => (r.Calls, r.Puts));
+
                 var data = LoadCsv(FilePath, UseLatestTimestamp, out var err,
                     EnableConversion, QuotesCsvPath, ManualSpyPrice, ManualEsPrice, PriceStep);
                 lock (_sync)
                 {
+                    _prevBySpy = prevBySpyLocal;
+                    _prevByStrike = prevByStrikeLocal;
                     _rows.Clear();
                     _rows.AddRange(data);
                 }
@@ -955,12 +1056,12 @@ namespace ATAS.Indicators.Technical
                 var headers = SplitCsvLine(lines[0]);
                 int idxStrike = FindIndex(headers, "strike");
                 int idxCalls = FindIndex(headers, "call"); // matches CALL*
-                int idxPuts = FindIndex(headers, "put");  // matches PUT*
-                int idxTs = FindIndex(headers, "time");   // matches Timestamp
+                int idxPuts = FindIndex(headers, "put"); // matches PUT*
+                int idxTs = FindIndex(headers, "time"); // matches Timestamp
                 int idxSpy = FindIndex(headers, "spy");
                 int idxEs = FindIndex(headers, "es");
 
-                if (idxStrike < 0 || idxCalls < 0 || idxPuts < 0)
+                if (idxStrike <0 || idxCalls <0 || idxPuts <0)
                 {
                     error = "CSV headers not recognized. Expect Strike, CALL*, PUT*, Timestamp";
                     return result;
@@ -969,9 +1070,9 @@ namespace ATAS.Indicators.Technical
                 // If only latest timestamp requested, find max
                 DateTime? maxTs = null;
                 string? maxTsRaw = null;
-                if (useLatestTimestamp && idxTs >= 0)
+                if (useLatestTimestamp && idxTs >=0)
                 {
-                    for (int i = 1; i < lines.Length; i++)
+                    for (int i =1; i < lines.Length; i++)
                     {
                         if (string.IsNullOrWhiteSpace(lines[i])) continue;
                         var cols = SplitCsvLine(lines[i]);
@@ -990,7 +1091,7 @@ namespace ATAS.Indicators.Technical
                         else
                         {
                             // fallback lexicographic
-                            if (maxTsRaw == null || string.CompareOrdinal(tsRaw, maxTsRaw) > 0)
+                            if (maxTsRaw == null || string.CompareOrdinal(tsRaw, maxTsRaw) >0)
                                 maxTsRaw = tsRaw;
                         }
                     }
@@ -999,16 +1100,16 @@ namespace ATAS.Indicators.Technical
                 // Load external quotes if needed
                 Dictionary<string, decimal>? factorByTs = null;
                 string? quotesErr = null;
-                if (enableConversion && (idxSpy < 0 || idxEs < 0) && !string.IsNullOrWhiteSpace(quotesCsvPath) && File.Exists(quotesCsvPath))
+                if (enableConversion && (idxSpy <0 || idxEs <0) && !string.IsNullOrWhiteSpace(quotesCsvPath) && File.Exists(quotesCsvPath))
                 {
                     factorByTs = LoadQuotesFactors(quotesCsvPath!, out quotesErr);
                     if (quotesErr != null && error == null) error = $"Quotes CSV: {quotesErr}";
                 }
 
-                decimal manualFactor = (enableConversion && manualSpy > 0 && manualEs > 0) ? SafeDiv(manualEs, manualSpy) : 1m;
+                decimal manualFactor = (enableConversion && manualSpy >0 && manualEs >0) ? SafeDiv(manualEs, manualSpy) :1m;
 
                 var agg = new Dictionary<decimal, (decimal calls, decimal puts, decimal spyStrike)>();
-                for (int i = 1; i < lines.Length; i++)
+                for (int i =1; i < lines.Length; i++)
                 {
                     var line = lines[i];
                     if (string.IsNullOrWhiteSpace(line)) continue;
@@ -1016,24 +1117,24 @@ namespace ATAS.Indicators.Technical
                     if (cols.Length <= Math.Max(idxStrike, Math.Max(idxCalls, Math.Max(idxPuts, idxTs))))
                         continue;
 
-                    string? tsRaw = idxTs >= 0 && idxTs < cols.Length ? cols[idxTs]?.Trim('"', ' ') : null;
+                    string? tsRaw = idxTs >=0 && idxTs < cols.Length ? cols[idxTs]?.Trim('"', ' ') : null;
 
-                    if (useLatestTimestamp && idxTs >= 0)
+                    if (useLatestTimestamp && idxTs >=0)
                     {
                         if (!string.Equals(tsRaw, maxTsRaw, StringComparison.Ordinal))
                             continue;
                     }
 
                     if (!TryParseDecimal(cols[idxStrike], out var strikeSpy)) continue; // original SPY
-                    if (!TryParseDecimal(cols[idxCalls], out var calls)) calls = 0;
-                    if (!TryParseDecimal(cols[idxPuts], out var puts)) puts = 0;
+                    if (!TryParseDecimal(cols[idxCalls], out var calls)) calls =0;
+                    if (!TryParseDecimal(cols[idxPuts], out var puts)) puts =0;
 
                     // determine conversion factor
-                    decimal factor = 1m;
+                    decimal factor =1m;
                     if (enableConversion)
                     {
-                        if (idxSpy >= 0 && idxEs >= 0 && idxSpy < cols.Length && idxEs < cols.Length &&
-                            TryParseDecimal(cols[idxSpy], out var spyVal) && TryParseDecimal(cols[idxEs], out var esVal) && spyVal > 0)
+                        if (idxSpy >=0 && idxEs >=0 && idxSpy < cols.Length && idxEs < cols.Length &&
+                            TryParseDecimal(cols[idxSpy], out var spyVal) && TryParseDecimal(cols[idxEs], out var esVal) && spyVal >0)
                         {
                             factor = SafeDiv(esVal, spyVal);
                         }
@@ -1041,14 +1142,14 @@ namespace ATAS.Indicators.Technical
                         {
                             factor = fByTs;
                         }
-                        else if (manualFactor > 0)
+                        else if (manualFactor >0)
                         {
                             factor = manualFactor;
                         }
                     }
 
                     var outStrike = enableConversion ? strikeSpy * factor : strikeSpy;
-                    if (priceStep > 0)
+                    if (priceStep >0)
                         outStrike = RoundToStep(outStrike, priceStep);
 
                     if (!agg.TryGetValue(outStrike, out var tuple))
@@ -1084,7 +1185,7 @@ namespace ATAS.Indicators.Technical
             try
             {
                 var lines = File.ReadAllLines(path);
-                if (lines.Length == 0)
+                if (lines.Length ==0)
                 {
                     error = "Quotes CSV empty";
                     return dict;
@@ -1094,20 +1195,20 @@ namespace ATAS.Indicators.Technical
                 int idxTs = FindIndex(headers, "time");
                 int idxSpy = FindIndex(headers, "spy");
                 int idxEs = FindIndex(headers, "es");
-                if (idxTs < 0 || idxSpy < 0 || idxEs < 0)
+                if (idxTs <0 || idxSpy <0 || idxEs <0)
                 {
                     error = "Quotes CSV headers not recognized. Expect Timestamp, SPY, ES";
                     return dict;
                 }
 
-                for (int i = 1; i < lines.Length; i++)
+                for (int i =1; i < lines.Length; i++)
                 {
                     var line = lines[i];
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     var cols = SplitCsvLine(line);
                     if (cols.Length <= Math.Max(idxTs, Math.Max(idxSpy, idxEs))) continue;
                     var tsRaw = cols[idxTs]?.Trim('"', ' ');
-                    if (!TryParseDecimal(cols[idxSpy], out var spy) || !TryParseDecimal(cols[idxEs], out var es) || spy <= 0)
+                    if (!TryParseDecimal(cols[idxSpy], out var spy) || !TryParseDecimal(cols[idxEs], out var es) || spy <=0)
                         continue;
                     dict[tsRaw ?? string.Empty] = SafeDiv(es, spy);
                 }
@@ -1123,22 +1224,22 @@ namespace ATAS.Indicators.Technical
 
         private static decimal SafeDiv(decimal a, decimal b)
         {
-            if (b == 0) return 0;
+            if (b ==0) return 0;
             return a / b;
         }
 
         private static decimal RoundToStep(decimal price, decimal step)
         {
-            if (step <= 0) return price;
+            if (step <=0) return price;
             var q = price / step;
-            var rounded = Math.Round(q, 0, MidpointRounding.AwayFromZero);
+            var rounded = Math.Round(q,0, MidpointRounding.AwayFromZero);
             return rounded * step;
         }
 
         private static int FindIndex(string[] headers, string key)
         {
             key = key.ToLowerInvariant();
-            for (int i = 0; i < headers.Length; i++)
+            for (int i =0; i < headers.Length; i++)
             {
                 var h = headers[i] ?? string.Empty;
                 var norm = new string(h.Where(ch => char.IsLetterOrDigit(ch)).ToArray()).ToLowerInvariant();
@@ -1154,12 +1255,12 @@ namespace ATAS.Indicators.Technical
             var list = new List<string>();
             bool inQuotes = false;
             var cur = new System.Text.StringBuilder();
-            for (int i = 0; i < line.Length; i++)
+            for (int i =0; i < line.Length; i++)
             {
                 var c = line[i];
                 if (c == '"')
                 {
-                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                    if (inQuotes && i +1 < line.Length && line[i +1] == '"')
                     {
                         cur.Append('"');
                         i++; // skip escaped quote
@@ -1185,7 +1286,7 @@ namespace ATAS.Indicators.Technical
 
         private static bool TryParseDecimal(string? s, out decimal value)
         {
-            value = 0m;
+            value =0m;
             if (string.IsNullOrWhiteSpace(s)) return false;
             s = s.Trim().Trim('"').Replace("$", string.Empty).Replace(" ", string.Empty);
             // Remove thousand separators if present
@@ -1194,7 +1295,7 @@ namespace ATAS.Indicators.Technical
                 // Try to guess culture: assume comma as thousand sep and dot as decimal
                 s = s.Replace(",", string.Empty);
             }
-            else if (s.Count(ch => ch == ',') == 1 && !s.Contains('.'))
+            else if (s.Count(ch => ch == ',') ==1 && !s.Contains('.'))
             {
                 // maybe decimal comma
                 s = s.Replace(',', '.');
