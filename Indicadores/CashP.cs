@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
@@ -7,6 +7,7 @@ using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using ATAS.Indicators;
 using OFT.Rendering.Context;
 using OFT.Rendering.Tools;
@@ -18,7 +19,7 @@ namespace ATAS.Indicators.Technical
     {
         private class StrikeRow
         {
-            // Strike final usado para posicionar (ES si conversi�n activada, SPY si no)
+            // Strike final usado para posicionar (ES si conversión activada, SPY si no)
             public decimal Strike { get; set; }
             // Strike original del CSV (SPY), para etiquetar al lado de los valores
             public decimal StrikeSpy { get; set; }
@@ -29,6 +30,7 @@ namespace ATAS.Indicators.Technical
         private readonly object _sync = new();
         private readonly List<StrikeRow> _rows = new();
         private readonly System.Timers.Timer _timer = new(60000);
+        private System.Timers.Timer? _hotkeyTimer;
         private string _error = string.Empty;
         private DateTime? _lastLoad;
 
@@ -36,12 +38,12 @@ namespace ATAS.Indicators.Technical
         private Dictionary<decimal, (decimal calls, decimal puts)> _prevBySpy = new();
         private Dictionary<decimal, (decimal calls, decimal puts)> _prevByStrike = new();
 
-        // Precio ES en tiempo real (desde el gr�fico)
+        // Precio ES en tiempo real (desde el gráfico)
         private decimal _lastEsPrice;
 
         // Settings
         private string _filePath = @"C:\\Path\\To\\SPY_Cash.csv";
-        [Display(GroupName = "1. Settings", Name = "CSV File Path", Order =0)]
+        [Display(GroupName = "1. Settings", Name = "CSV File Path", Order =10)]
         public string FilePath
         {
             get => _filePath;
@@ -53,7 +55,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _refreshSeconds =60;
-        [Display(GroupName = "1. Settings", Name = "Refresh (sec)", Order =1)]
+        [Display(GroupName = "1. Settings", Name = "Refresh (sec)", Order =20)]
         [Range(5,3600)]
         public int RefreshSeconds
         {
@@ -66,7 +68,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _useLatestTimestamp = true;
-        [Display(GroupName = "1. Settings", Name = "Use latest timestamp only", Order =2)]
+        [Display(GroupName = "1. Settings", Name = "Use latest timestamp only", Order =30)]
         public bool UseLatestTimestamp
         {
             get => _useLatestTimestamp;
@@ -79,23 +81,54 @@ namespace ATAS.Indicators.Technical
 
         // Conversion Settings
         private bool _enableConversion;
-        [Display(GroupName = "1. Settings", Name = "Convert strike to ES", Order =3)]
+        [Display(GroupName = "1. Settings", Name = "Convert strike to ES", Order =70)]
         public bool EnableConversion
         {
             get => _enableConversion;
             set { _enableConversion = value; ForceReload(); }
         }
 
+        // Tipo de perfil (preset de columnas)
+        public enum ProfileDataType { Custom, Cash, IV, Delta }
+        private ProfileDataType _profileType = ProfileDataType.Cash;
+        [Display(GroupName = "1. Settings", Name = "Profile type", Order =40)]
+        public ProfileDataType ProfileType
+        {
+            get => _profileType;
+            set
+            {
+                _profileType = value;
+                ApplyProfilePreset();
+            }
+        }
+
         private string _quotesCsvPath = string.Empty;
-        [Display(GroupName = "1. Settings", Name = "Quotes CSV (Timestamp, SPY, ES)", Order =4)]
+        [Display(GroupName = "1. Settings", Name = "Quotes CSV (Timestamp, SPY, ES)", Order =80)]
         public string QuotesCsvPath
         {
             get => _quotesCsvPath;
             set { _quotesCsvPath = value ?? string.Empty; ForceReload(); }
         }
 
+        // NUEVO: claves de columnas a usar para values (evita confusiones con múltiples columnas)
+        private string _callsColumnKey = "Cash Call";
+        [Display(GroupName = "1. Settings", Name = "Calls column key", Order =50)]
+        public string CallsColumnKey
+        {
+            get => _callsColumnKey;
+            set { _callsColumnKey = value ?? string.Empty; ForceReload(); }
+        }
+
+        private string _putsColumnKey = "Cash Put";
+        [Display(GroupName = "1. Settings", Name = "Puts column key", Order =60)]
+        public string PutsColumnKey
+        {
+            get => _putsColumnKey;
+            set { _putsColumnKey = value ?? string.Empty; ForceReload(); }
+        }
+
         private decimal _manualSpyPrice;
-        [Display(GroupName = "1. Settings", Name = "Manual SPY price", Order =5)]
+        [Display(GroupName = "1. Settings", Name = "Manual SPY price", Order =90)]
         public decimal ManualSpyPrice
         {
             get => _manualSpyPrice;
@@ -103,7 +136,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _manualEsPrice;
-        [Display(GroupName = "1. Settings", Name = "Manual ES price", Order =6)]
+        [Display(GroupName = "1. Settings", Name = "Manual ES price", Order =100)]
         public decimal ManualEsPrice
         {
             get => _manualEsPrice;
@@ -111,7 +144,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _priceStep =0.25m;
-        [Display(GroupName = "1. Settings", Name = "Price step (rounding)", Order =7)]
+        [Display(GroupName = "1. Settings", Name = "Price step (rounding)", Order =110)]
         public decimal PriceStep
         {
             get => _priceStep;
@@ -120,7 +153,7 @@ namespace ATAS.Indicators.Technical
 
         // Positioning
         private int _centerOffsetPx =0;
-        [Display(GroupName = "2. Position", Name = "Center offset (px)", Order =20)]
+        [Display(GroupName = "2. Position", Name = "Center offset (px)", Order =10)]
         [Range(-5000,5000)]
         public int CenterOffsetPx
         {
@@ -129,7 +162,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _callsOnRight = true;
-        [Display(GroupName = "2. Position", Name = "Calls on right side", Order =21)]
+        [Display(GroupName = "2. Position", Name = "Calls on right side", Order =20)]
         public bool CallsOnRight
         {
             get => _callsOnRight;
@@ -137,7 +170,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showCenterLine = true;
-        [Display(GroupName = "2. Position", Name = "Show center line", Order =22)]
+        [Display(GroupName = "2. Position", Name = "Show center line", Order =30)]
         public bool ShowCenterLine
         {
             get => _showCenterLine;
@@ -145,7 +178,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _centerLineColor = Color.FromArgb(140, Color.Red);
-        [Display(GroupName = "2. Position", Name = "Center line color", Order =23)]
+        [Display(GroupName = "2. Position", Name = "Center line color", Order =40)]
         public Color CenterLineColor
         {
             get => _centerLineColor;
@@ -153,7 +186,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _centerLineThickness =1;
-        [Display(GroupName = "2. Position", Name = "Center line thickness", Order =24)]
+        [Display(GroupName = "2. Position", Name = "Center line thickness", Order =50)]
         [Range(1,10)]
         public int CenterLineThickness
         {
@@ -163,7 +196,7 @@ namespace ATAS.Indicators.Technical
 
         // Appearance
         private int _maxBarWidthPx =220;
-        [Display(GroupName = "3. Appearance", Name = "Max side width (px)", Order =30)]
+        [Display(GroupName = "3. Appearance", Name = "Max side width (px)", Order =10)]
         [Range(20,1000)]
         public int MaxBarWidthPx
         {
@@ -172,7 +205,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _barThicknessPx =7;
-        [Display(GroupName = "3. Appearance", Name = "Bar thickness (px)", Order =31)]
+        [Display(GroupName = "3. Appearance", Name = "Bar thickness (px)", Order =20)]
         [Range(2,50)]
         public int BarThicknessPx
         {
@@ -181,7 +214,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _callsColor = Color.DodgerBlue;
-        [Display(GroupName = "3. Appearance", Name = "Calls color", Order =32)]
+        [Display(GroupName = "3. Appearance", Name = "Calls color", Order =40)]
         public Color CallsColor
         {
             get => _callsColor;
@@ -189,15 +222,48 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _putsColor = Color.IndianRed;
-        [Display(GroupName = "3. Appearance", Name = "Puts color", Order =33)]
+        [Display(GroupName = "3. Appearance", Name = "Puts color", Order =50)]
         public Color PutsColor
         {
             get => _putsColor;
             set { _putsColor = value; RedrawChart(); }
         }
 
+        // Colores por perfil (IV y Delta)
+        private Color _ivCallsColor = Color.MediumSeaGreen;
+        [Display(GroupName = "3. Appearance", Name = "IV Calls color", Order =60)]
+        public Color IvCallsColor
+        {
+            get => _ivCallsColor;
+            set { _ivCallsColor = value; RedrawChart(); }
+        }
+
+        private Color _ivPutsColor = Color.Salmon;
+        [Display(GroupName = "3. Appearance", Name = "IV Puts color", Order =70)]
+        public Color IvPutsColor
+        {
+            get => _ivPutsColor;
+            set { _ivPutsColor = value; RedrawChart(); }
+        }
+
+        private Color _deltaCallsColor = Color.SteelBlue;
+        [Display(GroupName = "3. Appearance", Name = "Delta Calls color", Order =80)]
+        public Color DeltaCallsColor
+        {
+            get => _deltaCallsColor;
+            set { _deltaCallsColor = value; RedrawChart(); }
+        }
+
+        private Color _deltaPutsColor = Color.Sienna;
+        [Display(GroupName = "3. Appearance", Name = "Delta Puts color", Order =90)]
+        public Color DeltaPutsColor
+        {
+            get => _deltaPutsColor;
+            set { _deltaPutsColor = value; RedrawChart(); }
+        }
+
         private int _fillOpacity =140; //0..255
-        [Display(GroupName = "3. Appearance", Name = "Fill opacity", Order =34)]
+        [Display(GroupName = "3. Appearance", Name = "Fill opacity", Order =30)]
         [Range(0,255)]
         public int FillOpacity
         {
@@ -206,7 +272,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showValues;
-        [Display(GroupName = "3. Appearance", Name = "Show side values", Order =35)]
+        [Display(GroupName = "3. Appearance", Name = "Show side values", Order =100)]
         public bool ShowValues
         {
             get => _showValues;
@@ -214,7 +280,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _valueFormat = "0,0";
-        [Display(GroupName = "3. Appearance", Name = "Side value format", Order =36)]
+        [Display(GroupName = "3. Appearance", Name = "Side value format", Order =110)]
         public string ValueFormat
         {
             get => _valueFormat;
@@ -223,7 +289,7 @@ namespace ATAS.Indicators.Technical
 
         // Strike labels next to side values (SPY)
         private bool _showCenterStrikes = true;
-        [Display(GroupName = "4. Strike labels", Name = "Show SPY strike next to values", Order =40)]
+        [Display(GroupName = "4. Strike labels", Name = "Show SPY strike next to values", Order =10)]
         public bool ShowCenterStrikes
         {
             get => _showCenterStrikes;
@@ -231,15 +297,15 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _strikeFormat = "0"; // entero por defecto para formato (619)
-        [Display(GroupName = "4. Strike labels", Name = "SPY strike number format", Order =41)]
+        [Display(GroupName = "4. Strike labels", Name = "SPY strike number format", Order =20)]
         public string StrikeFormat
         {
             get => _strikeFormat;
-            set { _strikeFormat = value ?? string.Empty; RedrawChart(); }
+            set { _strikeFormat = value ?? string.Empty; }
         }
 
         private int _strikeFontSize =8;
-        [Display(GroupName = "4. Strike labels", Name = "Font size", Order =42)]
+        [Display(GroupName = "4. Strike labels", Name = "Font size", Order =30)]
         [Range(6,40)]
         public int StrikeFontSize
         {
@@ -248,7 +314,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _strikeColor = Color.LightSteelBlue;
-        [Display(GroupName = "4. Strike labels", Name = "Color", Order =43)]
+        [Display(GroupName = "4. Strike labels", Name = "Color", Order =40)]
         public Color StrikeColor
         {
             get => _strikeColor;
@@ -256,7 +322,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeLeftMarginPx =10;
-        [Display(GroupName = "4. Strike labels", Name = "Left strike extra margin (px)", Order =44)]
+        [Display(GroupName = "4. Strike labels", Name = "Left strike extra margin (px)", Order =50)]
         [Range(0,300)]
         public int StrikeLeftMarginPx
         {
@@ -265,7 +331,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeRightMarginPx =10;
-        [Display(GroupName = "4. Strike labels", Name = "Right strike extra margin (px)", Order =45)]
+        [Display(GroupName = "4. Strike labels", Name = "Right strike extra margin (px)", Order =60)]
         [Range(0,300)]
         public int StrikeRightMarginPx
         {
@@ -275,7 +341,7 @@ namespace ATAS.Indicators.Technical
 
         // Top summary panel (series style)
         private bool _showTopSummary = true;
-        [Display(GroupName = "5. Top summary", Name = "Show top summary", Order =50)]
+        [Display(GroupName = "5. Top summary", Name = "Show top summary", Order =10)]
         public bool ShowTopSummary
         {
             get => _showTopSummary;
@@ -283,7 +349,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _topFontSize =11;
-        [Display(GroupName = "5. Top summary", Name = "Font size", Order =51)]
+        [Display(GroupName = "5. Top summary", Name = "Font size", Order =20)]
         [Range(6,60)]
         public int TopFontSize
         {
@@ -292,7 +358,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _topMarginPx =6;
-        [Display(GroupName = "5. Top summary", Name = "Top margin (px)", Order =52)]
+        [Display(GroupName = "5. Top summary", Name = "Top margin (px)", Order =30)]
         [Range(0,200)]
         public int TopMarginPx
         {
@@ -301,7 +367,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _summaryBarWidthPx =240;
-        [Display(GroupName = "5. Top summary", Name = "Bar width (px)", Order =53)]
+        [Display(GroupName = "5. Top summary", Name = "Bar width (px)", Order =40)]
         [Range(60,1000)]
         public int SummaryBarWidthPx
         {
@@ -310,7 +376,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _summaryRowHeightPx =12;
-        [Display(GroupName = "5. Top summary", Name = "Row height (px)", Order =54)]
+        [Display(GroupName = "5. Top summary", Name = "Row height (px)", Order =50)]
         [Range(8,40)]
         public int SummaryRowHeightPx
         {
@@ -319,7 +385,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _summaryRowSpacingPx =4;
-        [Display(GroupName = "5. Top summary", Name = "Row spacing (px)", Order =55)]
+        [Display(GroupName = "5. Top summary", Name = "Row spacing (px)", Order =60)]
         [Range(0,40)]
         public int SummaryRowSpacingPx
         {
@@ -328,7 +394,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _summaryLabelWidthPx =110;
-        [Display(GroupName = "5. Top summary", Name = "Label width (px)", Order =56)]
+        [Display(GroupName = "5. Top summary", Name = "Label width (px)", Order =70)]
         [Range(50,300)]
         public int SummaryLabelWidthPx
         {
@@ -337,7 +403,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _summaryBackBar = Color.FromArgb(80,120,120,120);
-        [Display(GroupName = "5. Top summary", Name = "Back bar color", Order =57)]
+        [Display(GroupName = "5. Top summary", Name = "Back bar color", Order =80)]
         public Color SummaryBackBar
         {
             get => _summaryBackBar;
@@ -345,7 +411,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _summaryCallsColor = Color.DodgerBlue;
-        [Display(GroupName = "5. Top summary", Name = "Calls bar color", Order =58)]
+        [Display(GroupName = "5. Top summary", Name = "Calls bar color", Order =90)]
         public Color SummaryCallsColor
         {
             get => _summaryCallsColor;
@@ -353,32 +419,49 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _summaryPutsColor = Color.IndianRed;
-        [Display(GroupName = "5. Top summary", Name = "Puts bar color", Order =59)]
+        [Display(GroupName = "5. Top summary", Name = "Puts bar color", Order =100)]
         public Color SummaryPutsColor
         {
             get => _summaryPutsColor;
             set { _summaryPutsColor = value; RedrawChart(); }
         }
 
-        private Color _summaryTotalColor = Color.SteelBlue;
-        [Display(GroupName = "5. Top summary", Name = "Total bar color (fallback)", Order =60)]
-        public Color SummaryTotalColor
+        // Colores del panel superior por perfil (IV y Delta)
+        private Color _summaryCallsColorIv = Color.MediumSeaGreen;
+        [Display(GroupName = "5. Top summary", Name = "IV Calls bar color", Order =110)]
+        public Color SummaryCallsColorIV
         {
-            get => _summaryTotalColor;
-            set { _summaryTotalColor = value; RedrawChart(); }
+            get => _summaryCallsColorIv;
+            set { _summaryCallsColorIv = value; RedrawChart(); }
         }
 
-        private Color _summaryTextColor = Color.White;
-        [Display(GroupName = "5. Top summary", Name = "Text color", Order =61)]
-        public Color SummaryTextColor
+        private Color _summaryPutsColorIv = Color.Salmon;
+        [Display(GroupName = "5. Top summary", Name = "IV Puts bar color", Order =120)]
+        public Color SummaryPutsColorIV
         {
-            get => _summaryTextColor;
-            set { _summaryTextColor = value; RedrawChart(); }
+            get => _summaryPutsColorIv;
+            set { _summaryPutsColorIv = value; RedrawChart(); }
         }
 
-        // Mostrar SPY impl�cado centrado
+        private Color _summaryCallsColorDelta = Color.SteelBlue;
+        [Display(GroupName = "5. Top summary", Name = "Delta Calls bar color", Order =130)]
+        public Color SummaryCallsColorDelta
+        {
+            get => _summaryCallsColorDelta;
+            set { _summaryCallsColorDelta = value; RedrawChart(); }
+        }
+
+        private Color _summaryPutsColorDelta = Color.Sienna;
+        [Display(GroupName = "5. Top summary", Name = "Delta Puts bar color", Order =140)]
+        public Color SummaryPutsColorDelta
+        {
+            get => _summaryPutsColorDelta;
+            set { _summaryPutsColorDelta = value; RedrawChart(); }
+        }
+
+        // Mostrar SPY implícado centrado
         private bool _showSpyCurrent = true;
-        [Display(GroupName = "5. Top summary", Name = "Show implied SPY below", Order =62)]
+        [Display(GroupName = "5. Top summary", Name = "Show implied SPY below", Order =150)]
         public bool ShowSpyCurrent
         {
             get => _showSpyCurrent;
@@ -386,15 +469,15 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _spyValueFormat = "0.00";
-        [Display(GroupName = "5. Top summary", Name = "SPY value format", Order =63)]
+        [Display(GroupName = "5. Top summary", Name = "SPY value format", Order =160)]
         public string SpyValueFormat
         {
             get => _spyValueFormat;
-            set { _spyValueFormat = value ?? string.Empty; RedrawChart(); }
+            set { _spyValueFormat = value ?? string.Empty; }
         }
 
         private bool _useChartEs = true;
-        [Display(GroupName = "5. Top summary", Name = "Use chart price as ES", Order =64)]
+        [Display(GroupName = "5. Top summary", Name = "Use chart price as ES", Order =170)]
         public bool UseChartPriceAsES
         {
             get => _useChartEs;
@@ -403,7 +486,7 @@ namespace ATAS.Indicators.Technical
 
         // Strike horizontal lines
         private bool _showStrikeLines = false;
-        [Display(GroupName = "6. Strike lines", Name = "Show strike lines", Order =70)]
+        [Display(GroupName = "6. Strike lines", Name = "Show strike lines", Order =10)]
         public bool ShowStrikeLines
         {
             get => _showStrikeLines;
@@ -411,7 +494,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _strikeLineColor = Color.FromArgb(60,200,200,200);
-        [Display(GroupName = "6. Strike lines", Name = "Line color", Order =71)]
+        [Display(GroupName = "6. Strike lines", Name = "Line color", Order =20)]
         public Color StrikeLineColor
         {
             get => _strikeLineColor;
@@ -419,7 +502,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeLineThickness =1;
-        [Display(GroupName = "6. Strike lines", Name = "Thickness", Order =72)]
+        [Display(GroupName = "6. Strike lines", Name = "Thickness", Order =30)]
         [Range(1,10)]
         public int StrikeLineThickness
         {
@@ -428,7 +511,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private DashStyle _strikeLineDash = DashStyle.Solid;
-        [Display(GroupName = "6. Strike lines", Name = "Dash style", Order =73)]
+        [Display(GroupName = "6. Strike lines", Name = "Dash style", Order =40)]
         public DashStyle StrikeLineDash
         {
             get => _strikeLineDash;
@@ -437,7 +520,7 @@ namespace ATAS.Indicators.Technical
 
         // Max lines (dominant strikes)
         private bool _showMaxCallsLine = true;
-        [Display(GroupName = "7. Max lines", Name = "Show Max Calls line", Order =80)]
+        [Display(GroupName = "7. Max lines", Name = "Show Max Calls line", Order =10)]
         public bool ShowMaxCallsLine
         {
             get => _showMaxCallsLine;
@@ -445,7 +528,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMaxPutsLine = true;
-        [Display(GroupName = "7. Max lines", Name = "Show Max Puts line", Order =81)]
+        [Display(GroupName = "7. Max lines", Name = "Show Max Puts line", Order =20)]
         public bool ShowMaxPutsLine
         {
             get => _showMaxPutsLine;
@@ -453,7 +536,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _maxCallsLineColor = Color.DodgerBlue;
-        [Display(GroupName = "7. Max lines", Name = "Max Calls color", Order =82)]
+        [Display(GroupName = "7. Max lines", Name = "Max Calls color", Order =30)]
         public Color MaxCallsLineColor
         {
             get => _maxCallsLineColor;
@@ -461,7 +544,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _maxPutsLineColor = Color.IndianRed;
-        [Display(GroupName = "7. Max lines", Name = "Max Puts color", Order =83)]
+        [Display(GroupName = "7. Max lines", Name = "Max Puts color", Order =40)]
         public Color MaxPutsLineColor
         {
             get => _maxPutsLineColor;
@@ -469,7 +552,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _maxLinesThickness =2;
-        [Display(GroupName = "7. Max lines", Name = "Max lines thickness", Order =84)]
+        [Display(GroupName = "7. Max lines", Name = "Max lines thickness", Order =50)]
         [Range(1,20)]
         public int MaxLinesThickness
         {
@@ -478,7 +561,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private DashStyle _maxLinesDash = DashStyle.Solid;
-        [Display(GroupName = "7. Max lines", Name = "Max lines dash style", Order =85)]
+        [Display(GroupName = "7. Max lines", Name = "Max lines dash style", Order =60)]
         public DashStyle MaxLinesDash
         {
             get => _maxLinesDash;
@@ -487,7 +570,7 @@ namespace ATAS.Indicators.Technical
 
         // Net levels (Calls - Puts) por strike
         private bool _showNetLevels = true;
-        [Display(GroupName = "8. Net levels", Name = "Show net levels (Calls-Puts)", Order =90)]
+        [Display(GroupName = "8. Net levels", Name = "Show net levels (Calls-Puts)", Order =10)]
         public bool ShowNetLevels
         {
             get => _showNetLevels;
@@ -495,7 +578,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _netThicknessPx =9;
-        [Display(GroupName = "8. Net levels", Name = "Net level thickness (px)", Order =91)]
+        [Display(GroupName = "8. Net levels", Name = "Net level thickness (px)", Order =20)]
         [Range(2,60)]
         public int NetThicknessPx
         {
@@ -504,7 +587,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _netOpacity =200;
-        [Display(GroupName = "8. Net levels", Name = "Net level opacity", Order =92)]
+        [Display(GroupName = "8. Net levels", Name = "Net level opacity", Order =30)]
         [Range(0,255)]
         public int NetOpacity
         {
@@ -513,7 +596,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _netCallsColor = Color.DodgerBlue;
-        [Display(GroupName = "8. Net levels", Name = "Net Calls color", Order =93)]
+        [Display(GroupName = "8. Net levels", Name = "Net Calls color", Order =40)]
         public Color NetCallsColor
         {
             get => _netCallsColor;
@@ -521,11 +604,44 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _netPutsColor = Color.IndianRed;
-        [Display(GroupName = "8. Net levels", Name = "Net Puts color", Order =94)]
+        [Display(GroupName = "8. Net levels", Name = "Net Puts color", Order =50)]
         public Color NetPutsColor
         {
             get => _netPutsColor;
             set { _netPutsColor = value; RedrawChart(); }
+        }
+
+        // Nuevos: Colores NET por perfil (IV y Delta)
+        private Color _netCallsColorIv = Color.MediumSeaGreen;
+        [Display(GroupName = "8. Net levels", Name = "Net Calls color (IV)", Order =60)]
+        public Color NetCallsColorIV
+        {
+            get => _netCallsColorIv;
+            set { _netCallsColorIv = value; RedrawChart(); }
+        }
+
+        private Color _netPutsColorIv = Color.Salmon;
+        [Display(GroupName = "8. Net levels", Name = "Net Puts color (IV)", Order =70)]
+        public Color NetPutsColorIV
+        {
+            get => _netPutsColorIv;
+            set { _netPutsColorIv = value; RedrawChart(); }
+        }
+
+        private Color _netCallsColorDelta = Color.SteelBlue;
+        [Display(GroupName = "8. Net levels", Name = "Net Calls color (Delta)", Order =80)]
+        public Color NetCallsColorDelta
+        {
+            get => _netCallsColorDelta;
+            set { _netCallsColorDelta = value; RedrawChart(); }
+        }
+
+        private Color _netPutsColorDelta = Color.Sienna;
+        [Display(GroupName = "8. Net levels", Name = "Net Puts color (Delta)", Order =90)]
+        public Color NetPutsColorDelta
+        {
+            get => _netPutsColorDelta;
+            set { _netPutsColorDelta = value; RedrawChart(); }
         }
 
         // Previous value markers (for last snapshot)
@@ -536,21 +652,21 @@ namespace ATAS.Indicators.Technical
         private Color _prevMarkerCallsColor = Color.LightSkyBlue;
         private Color _prevMarkerPutsColor = Color.Salmon;
 
-        [Display(GroupName = "9. Previous markers", Name = "Show previous markers", Order =100)]
+        [Display(GroupName = "9. Previous markers", Name = "Show previous markers", Order =10)]
         public bool ShowPreviousMarkers
         {
             get => _showPrevMarkers;
             set { _showPrevMarkers = value; RedrawChart(); }
         }
 
-        [Display(GroupName = "9. Previous markers", Name = "Marker mode", Order =101)]
+        [Display(GroupName = "9. Previous markers", Name = "Marker mode", Order =20)]
         public PrevMarkerMode PreviousMarkerMode
         {
             get => _prevMarkerMode;
             set { _prevMarkerMode = value; RedrawChart(); }
         }
 
-        [Display(GroupName = "9. Previous markers", Name = "Marker size (px)", Order =102)]
+        [Display(GroupName = "9. Previous markers", Name = "Marker size (px)", Order =30)]
         [Range(2,20)]
         public int PreviousMarkerSize
         {
@@ -558,14 +674,14 @@ namespace ATAS.Indicators.Technical
             set { _prevMarkerSize = Math.Clamp(value,2,20); RedrawChart(); }
         }
 
-        [Display(GroupName = "9. Previous markers", Name = "Calls marker color", Order =103)]
+        [Display(GroupName = "9. Previous markers", Name = "Calls marker color", Order =40)]
         public Color PreviousMarkerCallsColor
         {
             get => _prevMarkerCallsColor;
             set { _prevMarkerCallsColor = value; RedrawChart(); }
         }
 
-        [Display(GroupName = "9. Previous markers", Name = "Puts marker color", Order =104)]
+        [Display(GroupName = "9. Previous markers", Name = "Puts marker color", Order =50)]
         public Color PreviousMarkerPutsColor
         {
             get => _prevMarkerPutsColor;
@@ -578,14 +694,14 @@ namespace ATAS.Indicators.Technical
         private Color _prevNetPositiveColor = Color.LightGreen;
         private Color _prevNetNegativeColor = Color.LightCoral;
 
-        [Display(GroupName = "9. Previous markers", Name = "Show previous NET markers", Order =105)]
+        [Display(GroupName = "9. Previous markers", Name = "Show previous NET markers", Order =60)]
         public bool ShowPreviousNetMarkers
         {
             get => _showPrevNetMarkers;
             set { _showPrevNetMarkers = value; RedrawChart(); }
         }
 
-        [Display(GroupName = "9. Previous markers", Name = "NET marker size (px)", Order =106)]
+        [Display(GroupName = "9. Previous markers", Name = "NET marker size (px)", Order =70)]
         [Range(2,20)]
         public int PreviousNetMarkerSize
         {
@@ -593,14 +709,14 @@ namespace ATAS.Indicators.Technical
             set { _prevNetMarkerSize = Math.Clamp(value,2,20); RedrawChart(); }
         }
 
-        [Display(GroupName = "9. Previous markers", Name = "NET positive color", Order =107)]
+        [Display(GroupName = "9. Previous markers", Name = "NET positive color", Order =80)]
         public Color PreviousNetPositiveColor
         {
             get => _prevNetPositiveColor;
             set { _prevNetPositiveColor = value; RedrawChart(); }
         }
 
-        [Display(GroupName = "9. Previous markers", Name = "NET negative color", Order =108)]
+        [Display(GroupName = "9. Previous markers", Name = "NET negative color", Order =90)]
         public Color PreviousNetNegativeColor
         {
             get => _prevNetNegativeColor;
@@ -616,6 +732,11 @@ namespace ATAS.Indicators.Technical
             _timer.AutoReset = true;
             _timer.Elapsed += OnTimer;
             _timer.Start();
+
+            // Hotkey polling timer (más fiable que depender del render loop)
+            _hotkeyTimer = new System.Timers.Timer(30) { AutoReset = true, Enabled = true };
+            _hotkeyTimer.Elapsed += OnHotkeyTimer;
+            _hotkeyTimer.Start();
         }
 
         protected override void OnInitialize()
@@ -626,11 +747,13 @@ namespace ATAS.Indicators.Technical
 
         protected override void OnCalculate(int bar, decimal value)
         {
-            _lastEsPrice = value; // usar precio del gr�fico como ES en tiempo real
+            _lastEsPrice = value; // usar precio del gráfico como ES en tiempo real
         }
 
+        // Hotkey handling: cycle profile before drawing
         protected override void OnRender(RenderContext context, DrawingLayouts layout)
         {
+            // Nota: el manejo de hotkeys se hace en _hotkeyTimer para no perder pulsaciones
             if (ChartInfo?.PriceChartContainer == null)
             {
                 context.DrawString("Chart not ready", new RenderFont("Arial",10), Color.Red,10,10);
@@ -692,11 +815,25 @@ namespace ATAS.Indicators.Technical
                 var callsW = (int)Math.Round((double)row.Calls * scale);
                 var putsW = (int)Math.Round((double)row.Puts * scale);
 
+                // Selección de color por perfil
+                Color callsBase, putsBase;
+                switch (_profileType)
+                {
+                    case ProfileDataType.IV:
+                        callsBase = _ivCallsColor; putsBase = _ivPutsColor; break;
+                    case ProfileDataType.Delta:
+                        callsBase = _deltaCallsColor; putsBase = _deltaPutsColor; break;
+                    case ProfileDataType.Cash:
+                    case ProfileDataType.Custom:
+                    default:
+                        callsBase = _callsColor; putsBase = _putsColor; break;
+                }
+
                 // Decide which side gets which
                 int rightW = _callsOnRight ? callsW : putsW;
                 int leftW = _callsOnRight ? putsW : callsW;
-                Color rightColor = _callsOnRight ? _callsColor : _putsColor;
-                Color leftColor = _callsOnRight ? _putsColor : _callsColor;
+                Color rightColor = _callsOnRight ? callsBase : putsBase;
+                Color leftColor = _callsOnRight ? putsBase : callsBase;
 
                 // Optional strike horizontal line
                 if (ShowStrikeLines)
@@ -765,18 +902,33 @@ namespace ATAS.Indicators.Technical
                         {
                             int t = _netThicknessPx;
                             int topNet = y - t /2;
+
+                            // Selección de colores NET por perfil
+                            Color netCallsBase, netPutsBase;
+                            switch (_profileType)
+                            {
+                                case ProfileDataType.IV:
+                                    netCallsBase = _netCallsColorIv; netPutsBase = _netPutsColorIv; break;
+                                case ProfileDataType.Delta:
+                                    netCallsBase = _netCallsColorDelta; netPutsBase = _netPutsColorDelta; break;
+                                case ProfileDataType.Cash:
+                                case ProfileDataType.Custom:
+                                default:
+                                    netCallsBase = _netCallsColor; netPutsBase = _netPutsColor; break;
+                            }
+
                             if (diff >0)
                             {
                                 // Calls dominan -> dibujar hacia el lado Calls
                                 if (_callsOnRight)
                                 {
                                     var r = new Rectangle(xCenter, topNet, w, t);
-                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netCallsColor), r);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, netCallsBase), r);
                                 }
                                 else
                                 {
                                     var r = new Rectangle(xCenter - w, topNet, w, t);
-                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netCallsColor), r);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, netCallsBase), r);
                                 }
                             }
                             else // diff <0 -> Puts dominan
@@ -784,12 +936,12 @@ namespace ATAS.Indicators.Technical
                                 if (_callsOnRight)
                                 {
                                     var r = new Rectangle(xCenter - w, topNet, w, t);
-                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netPutsColor), r);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, netPutsBase), r);
                                 }
                                 else
                                 {
                                     var r = new Rectangle(xCenter, topNet, w, t);
-                                    context.FillRectangle(Color.FromArgb(_netOpacity, _netPutsColor), r);
+                                    context.FillRectangle(Color.FromArgb(_netOpacity, netPutsBase), r);
                                 }
                             }
                         }
@@ -895,6 +1047,9 @@ namespace ATAS.Indicators.Technical
             }
         }
 
+        private Color GetSummaryTextColorValue() => Color.White;
+        private Color GetSummaryTotalColorValue() => Color.SteelBlue;
+
         private void DrawTopSummary(RenderContext context, int xCenter, List<StrikeRow> snapshot)
         {
             decimal sumCalls = snapshot.Sum(r => r.Calls);
@@ -907,18 +1062,57 @@ namespace ATAS.Indicators.Technical
             int barW = _summaryBarWidthPx;
             int labelW = _summaryLabelWidthPx;
 
-            // Origen X: bloque centrado en la l�nea
+            // Origen X: bloque centrado en la línea
             int xBar = xCenter - barW /2;
             int xLabel = xBar - labelW -8;
             int xRightText = xBar + barW +8;
 
             int y = _topMarginPx;
 
+            // Capturar colores locales para usarlos en la función local
+            Color summaryTextColorLocal = Color.White;
+            Color summaryTotalColorLocal = Color.SteelBlue;
+
+            string callsLabel = _profileType switch
+            {
+                ProfileDataType.Cash => "Calls $$$",
+                ProfileDataType.IV => "IV Call",
+                ProfileDataType.Delta => "Delta Call",
+                _ => "Calls"
+            };
+            string putsLabel = _profileType switch
+            {
+                ProfileDataType.Cash => "Puts $$$",
+                ProfileDataType.IV => "IV Put",
+                ProfileDataType.Delta => "Delta Put",
+                _ => "Puts"
+            };
+            string totalLabel = _profileType switch
+            {
+                ProfileDataType.Cash => "TOTAL $$$",
+                ProfileDataType.Delta => "TOTAL DELTA",
+                _ => "TOTAL"
+            };
+
+            // Selección de colores de barras del resumen según perfil
+            Color sumCallsCol, sumPutsCol;
+            switch (_profileType)
+            {
+                case ProfileDataType.IV:
+                    sumCallsCol = _summaryCallsColorIv; sumPutsCol = _summaryPutsColorIv; break;
+                case ProfileDataType.Delta:
+                    sumCallsCol = _summaryCallsColorDelta; sumPutsCol = _summaryPutsColorDelta; break;
+                case ProfileDataType.Cash:
+                case ProfileDataType.Custom:
+                default:
+                    sumCallsCol = _summaryCallsColor; sumPutsCol = _summaryPutsColor; break;
+            }
+
             // helper local
             void DrawRow(string label, decimal value, Color color, decimal total)
             {
                 // etiqueta izquierda
-                context.DrawString(label, font, SummaryTextColor, xLabel, y + (rowH - _topFontSize) /2);
+                context.DrawString(label, font, summaryTextColorLocal, xLabel, y + (rowH - _topFontSize) /2);
 
                 // barra de fondo
                 var back = _summaryBackBar;
@@ -933,26 +1127,26 @@ namespace ATAS.Indicators.Technical
 
                 // texto derecha: valor compacto y %
                 var valTxt = $"{FormatCompact(value)} ({Math.Round(ratio *100)}%)";
-                context.DrawString(valTxt, font, SummaryTextColor, xRightText, y + (rowH - _topFontSize) /2);
+                context.DrawString(valTxt, font, summaryTextColorLocal, xRightText, y + (rowH - _topFontSize) /2);
 
                 y += rowH + gap;
             }
 
-            DrawRow("Calls $$$", sumCalls, _summaryCallsColor, sumTotal);
-            DrawRow("Puts $$$", sumPuts, _summaryPutsColor, sumTotal);
+            DrawRow(callsLabel, sumCalls, sumCallsCol, sumTotal);
+            DrawRow(putsLabel, sumPuts, sumPutsCol, sumTotal);
 
             // TOTAL: color del dominante (Calls o Puts). Si iguales, usar color fallback.
-            Color totalColor = sumCalls > sumPuts ? _summaryCallsColor : (sumPuts > sumCalls ? _summaryPutsColor : _summaryTotalColor);
-            DrawRow("TOTAL $$$", sumTotal, totalColor, sumTotal <=0 ?1 : sumTotal);
+            Color totalColor = sumCalls > sumPuts ? sumCallsCol : (sumPuts > sumCalls ? sumPutsCol : summaryTotalColorLocal);
+            DrawRow(totalLabel, sumTotal, totalColor, sumTotal <=0 ?1 : sumTotal);
 
             // SPY implicado centrado debajo del panel superior (ratio = ManualES / ManualSPY)
             if (_showSpyCurrent)
             {
-                // Precio ES en tiempo real (gr�fico)
+                // Precio ES en tiempo real (gráfico)
                 decimal esNow = _useChartEs && _lastEsPrice >0 ? _lastEsPrice :0m;
                 if (esNow <=0 && !string.IsNullOrWhiteSpace(_quotesCsvPath) && File.Exists(_quotesCsvPath))
                 {
-                    // fallback a �ltimo ES del CSV de quotes
+                    // fallback a último ES del CSV de quotes
                     if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyQ, out var esQ) && esQ >0)
                         esNow = esQ;
                 }
@@ -971,71 +1165,35 @@ namespace ATAS.Indicators.Technical
                     int textW = EstimateTextWidth(text, font);
                     int cx = xCenter - textW /2;
                     int spyY = y;
-                    context.DrawString(text, font, SummaryTextColor, cx, spyY + (rowH - _topFontSize) /2);
+                    context.DrawString(text, font, summaryTextColorLocal, cx, spyY + (rowH - _topFontSize) /2);
                     y += rowH + gap;
                 }
             }
         }
 
-        private bool TryGetLatestSpyEsFromQuotes(string path, out decimal spy, out decimal es)
+        private void ApplyProfilePreset()
         {
-            spy =0m; es =0m;
-            try
+            switch (_profileType)
             {
-                var lines = File.ReadAllLines(path);
-                if (lines.Length <=1) return false;
-                var headers = SplitCsvLine(lines[0]);
-                int idxSpy = FindIndex(headers, "spy");
-                int idxEs = FindIndex(headers, "es");
-                if (idxSpy <0 || idxEs <0) return false;
-                for (int i = lines.Length -1; i >=1; i--)
-                {
-                    var line = lines[i];
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    var cols = SplitCsvLine(line);
-                    if (cols.Length <= Math.Max(idxSpy, idxEs)) continue;
-                    if (TryParseDecimal(cols[idxSpy], out var s) && TryParseDecimal(cols[idxEs], out var e))
-                    { spy = s; es = e; return true; }
-                }
-                return false;
+                case ProfileDataType.Cash:
+                    _callsColumnKey = "Cash Call";
+                    _putsColumnKey = "Cash Put";
+                    break;
+                case ProfileDataType.IV:
+                    _callsColumnKey = "IV Call";
+                    _putsColumnKey = "IV Put";
+                    break;
+                case ProfileDataType.Delta:
+                    _callsColumnKey = "Call Delta";
+                    _putsColumnKey = "Delta Put"; // nombre habitual en CSV
+                    break;
+                case ProfileDataType.Custom:
+                default:
+                    // Mantener claves actuales
+                    break;
             }
-            catch { return false; }
-        }
-
-        private static string FormatCompact(decimal value)
-        {
-            var abs = Math.Abs(value);
-            string suffix;
-            decimal num;
-            if (abs >=1_000_000_000m)
-            {
-                suffix = "B";
-                num = value /1_000_000_000m;
-            }
-            else if (abs >=1_000_000m)
-            {
-                suffix = "M";
-                num = value /1_000_000m;
-            }
-            else if (abs >=1_000m)
-            {
-                suffix = "K";
-                num = value /1_000m;
-            }
-            else
-            {
-                return value.ToString("0,0", CultureInfo.CurrentCulture);
-            }
-
-            return num.ToString("0.##", CultureInfo.CurrentCulture) + suffix;
-        }
-
-        private static int EstimateTextWidth(string text, RenderFont font)
-        {
-            if (string.IsNullOrEmpty(text)) return 0;
-            // Heur�stica aproximada
-            double factor =0.58;
-            return (int)Math.Ceiling(text.Length * (font.Size * factor));
+            // Refrescar después de aplicar preset
+            ForceReload();
         }
 
         private void ResetTimer()
@@ -1070,7 +1228,8 @@ namespace ATAS.Indicators.Technical
                 var prevByStrikeLocal = prevSnapshot.ToDictionary(r => r.Strike, r => (r.Calls, r.Puts));
 
                 var data = LoadCsv(FilePath, UseLatestTimestamp, out var err,
-                    EnableConversion, QuotesCsvPath, ManualSpyPrice, ManualEsPrice, PriceStep);
+                    EnableConversion, QuotesCsvPath, ManualSpyPrice, ManualEsPrice, PriceStep,
+                    CallsColumnKey, PutsColumnKey);
                 lock (_sync)
                 {
                     _prevBySpy = prevBySpyLocal;
@@ -1096,7 +1255,9 @@ namespace ATAS.Indicators.Technical
             string? quotesCsvPath,
             decimal manualSpy,
             decimal manualEs,
-            decimal priceStep)
+            decimal priceStep,
+            string callsColumnKey,
+            string putsColumnKey)
         {
             error = null;
             var result = new List<StrikeRow>();
@@ -1110,7 +1271,7 @@ namespace ATAS.Indicators.Technical
             try
             {
                 var lines = File.ReadAllLines(path);
-                if (lines.Length == 0)
+                if (lines.Length ==0)
                 {
                     error = "CSV empty";
                     return result;
@@ -1119,15 +1280,28 @@ namespace ATAS.Indicators.Technical
                 // Parse header
                 var headers = SplitCsvLine(lines[0]);
                 int idxStrike = FindIndex(headers, "strike");
-                int idxCalls = FindIndex(headers, "call"); // matches CALL*
-                int idxPuts = FindIndex(headers, "put"); // matches PUT*
+
+                // Elegir columnas calls/puts según claves proporcionadas; fallback a genérico
+                int idxCalls = -1;
+                if (!string.IsNullOrWhiteSpace(callsColumnKey))
+                    idxCalls = FindIndex(headers, callsColumnKey);
+                if (idxCalls <0)
+                    idxCalls = FindIndex(headers, "call");
+
+                int idxPuts = -1;
+                if (!string.IsNullOrWhiteSpace(putsColumnKey))
+                    idxPuts = FindIndex(headers, putsColumnKey);
+                if (idxPuts <0)
+                    idxPuts = FindIndex(headers, "put");
+
                 int idxTs = FindIndex(headers, "time"); // matches Timestamp
                 int idxSpy = FindIndex(headers, "spy");
                 int idxEs = FindIndex(headers, "es");
 
                 if (idxStrike <0 || idxCalls <0 || idxPuts <0)
                 {
-                    error = "CSV headers not recognized. Expect Strike, CALL*, PUT*, Timestamp";
+                    error = "CSV headers not recognized. Configure 'Calls column key' y 'Puts column key'.";
+
                     return result;
                 }
 
@@ -1172,7 +1346,8 @@ namespace ATAS.Indicators.Technical
 
                 decimal manualFactor = (enableConversion && manualSpy >0 && manualEs >0) ? SafeDiv(manualEs, manualSpy) :1m;
 
-                var agg = new Dictionary<decimal, (decimal calls, decimal puts, decimal spyStrike)>();
+                var agg = new Dictionary<decimal, (decimal calls, decimal puts, decimal spyStrike)>(
+                    enableConversion ? 1_000_000 : 1000); // optimizar para la mayoría de los casos (agregar más espacio para futuros strikes)
                 for (int i =1; i < lines.Length; i++)
                 {
                     var line = lines[i];
@@ -1302,12 +1477,13 @@ namespace ATAS.Indicators.Technical
 
         private static int FindIndex(string[] headers, string key)
         {
-            key = key.ToLowerInvariant();
+            key = key ?? string.Empty;
+            var knorm = new string(key.Where(ch => char.IsLetterOrDigit(ch)).ToArray()).ToLowerInvariant();
             for (int i =0; i < headers.Length; i++)
             {
                 var h = headers[i] ?? string.Empty;
                 var norm = new string(h.Where(ch => char.IsLetterOrDigit(ch)).ToArray()).ToLowerInvariant();
-                if (norm.Contains(key))
+                if (norm.Contains(knorm))
                     return i;
             }
             return -1;
@@ -1368,15 +1544,194 @@ namespace ATAS.Indicators.Technical
             return decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out value);
         }
 
+        private bool TryGetLatestSpyEsFromQuotes(string path, out decimal spy, out decimal es)
+        {
+            spy =0m; es =0m;
+            try
+            {
+                var lines = File.ReadAllLines(path);
+                if (lines.Length <=1) return false;
+                var headers = SplitCsvLine(lines[0]);
+                int idxSpy = FindIndex(headers, "spy");
+                int idxEs = FindIndex(headers, "es");
+                if (idxSpy <0 || idxEs <0) return false;
+                for (int i = lines.Length -1; i >=1; i--)
+                {
+                    var line = lines[i];
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    var cols = SplitCsvLine(line);
+                    if (cols.Length <= Math.Max(idxSpy, idxEs)) continue;
+                    if (TryParseDecimal(cols[idxSpy], out var s) && TryParseDecimal(cols[idxEs], out var e))
+                    { spy = s; es = e; return true; }
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        private static string FormatCompact(decimal value)
+        {
+            var abs = Math.Abs(value);
+            string suffix;
+            decimal num;
+            if (abs >=1_000_000_000m)
+            {
+                suffix = "B";
+                num = value /1_000_000_000m;
+            }
+            else if (abs >=1_000_000m)
+            {
+                suffix = "M";
+                num = value /1_000_000m;
+            }
+            else if (abs >=1_000m)
+            {
+                suffix = "K";
+                num = value /1_000m;
+            }
+            else
+            {
+                return value.ToString("0,0", CultureInfo.CurrentCulture);
+            }
+
+            return num.ToString("0.##", CultureInfo.CurrentCulture) + suffix;
+        }
+
+        private static int EstimateTextWidth(string text, RenderFont font)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            double factor =0.58; // heurística
+            return (int)Math.Ceiling(text.Length * (font.Size * factor));
+        }
+
         protected override void OnDispose()
         {
             try
             {
                 _timer.Stop();
                 _timer.Dispose();
+                if (_hotkeyTimer != null)
+                {
+                    _hotkeyTimer.Stop();
+                    _hotkeyTimer.Elapsed -= OnHotkeyTimer;
+                    _hotkeyTimer.Dispose();
+                    _hotkeyTimer = null;
+                }
             }
             catch { }
             base.OnDispose();
+        }
+
+        private void OnHotkeyTimer(object? sender, System.Timers.ElapsedEventArgs e)
+        {
+            try
+            {
+                if (CheckAndConsumeHotkey())
+                {
+                    CycleProfileType();
+                }
+            }
+            catch
+            {
+                // ignorar errores de hotkey para no romper el hilo del timer
+            }
+        }
+
+        //10. Hotkeys: configuración para alternar perfil
+        private bool _enableProfileHotkey = true;
+        [Display(GroupName = "10. Hotkeys", Name = "Enable profile hotkey", Order =10)]
+        public bool EnableProfileHotkey
+        {
+            get => _enableProfileHotkey;
+            set { _enableProfileHotkey = value; }
+        }
+
+        // Tecla base para el ciclo (A-Z,0-9). Se usa junto con Ctrl
+        private string _profileHotkeyKey = "P";
+        [Display(GroupName = "10. Hotkeys", Name = "Profile key (A-Z/0-9)", Order =20)]
+        public string ProfileCycleKey
+        {
+            get => _profileHotkeyKey;
+            set { _profileHotkeyKey = string.IsNullOrWhiteSpace(value) ? "P" : value.Trim(); }
+        }
+
+        // Requerir la tecla Ctrl como modificador
+        private bool _requireCtrlModifier = true;
+        [Display(GroupName = "10. Hotkeys", Name = "Require Ctrl modifier", Order =30)]
+        public bool RequireCtrlModifier
+        {
+            get => _requireCtrlModifier;
+            set { _requireCtrlModifier = value; }
+        }
+
+        // Estado anti-rebote
+        private bool _hotkeyPrevDown;
+        private DateTime _hotkeyLast = DateTime.MinValue;
+        private const int HotkeyDebounceMs =250;
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        private static int ResolveVkFromChar(char key)
+        {
+            key = char.ToUpperInvariant(key);
+            if (key >= 'A' && key <= 'Z') return key; // VK A..Z
+            if (key >= '0' && key <= '9') return key; // VK0..9
+            return 0; // unsupported
+        }
+
+        private bool CheckAndConsumeHotkey()
+        {
+            if (!_enableProfileHotkey)
+                return false;
+
+            char keyChar = 'P';
+            if (!string.IsNullOrWhiteSpace(_profileHotkeyKey))
+                keyChar = _profileHotkeyKey.Trim()[0];
+
+            int vKey = ResolveVkFromChar(keyChar);
+            if (vKey ==0)
+                return false; // tecla no soportada
+
+            const int VK_CONTROL =0x11;
+            bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) &0x8000) !=0;
+            if (_requireCtrlModifier && !ctrlDown)
+            {
+                // si se requiere Ctrl y no está presionado, no hay hotkey
+                _hotkeyPrevDown = false;
+                return false;
+            }
+
+            bool keyDown = (GetAsyncKeyState(vKey) &0x8000) !=0;
+            bool comboDown = (_requireCtrlModifier ? ctrlDown : true) && keyDown;
+
+            var now = DateTime.UtcNow;
+            bool fired = false;
+            if (comboDown && !_hotkeyPrevDown)
+            {
+                if ((now - _hotkeyLast).TotalMilliseconds >= HotkeyDebounceMs)
+                {
+                    fired = true;
+                    _hotkeyLast = now;
+                }
+            }
+            _hotkeyPrevDown = comboDown;
+            return fired;
+        }
+
+        private void CycleProfileType()
+        {
+            var next = _profileType;
+            switch (_profileType)
+            {
+                case ProfileDataType.Cash: next = ProfileDataType.IV; break;
+                case ProfileDataType.IV: next = ProfileDataType.Delta; break;
+                case ProfileDataType.Delta: next = ProfileDataType.Cash; break;
+                case ProfileDataType.Custom: next = ProfileDataType.Cash; break;
+                default: next = ProfileDataType.Cash; break;
+            }
+            _profileType = next;
+            ApplyProfilePreset();
         }
     }
 }
