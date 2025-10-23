@@ -24,7 +24,7 @@ namespace ATAS.Indicators.Technical
             public string[] Keys { get; init; } = Array.Empty<string>();
             public string Format { get; init; } // e.g. "#,0", "+0.##%;-0.##%"
             public string Unit { get; init; } // e.g. "K", "%"
-            public bool StickLastPositive { get; init; } // si true, usa último valor > 0 cuando esté vacío o <= 0
+            public bool StickLastPositive { get; init; } // si true, usa último valor >0 cuando esté vacío o <=0
         }
 
         private sealed class Section
@@ -40,70 +40,75 @@ namespace ATAS.Indicators.Technical
 
         // Config
         private string _csvPath = @"C:\\Data\\SPY.csv";
-        private int _refreshSeconds = 60;
-        private int _baseFontSize = 12;
+        private int _refreshSeconds =60;
+        private int _baseFontSize =12;
         private PanelAlign _panelAlign = PanelAlign.Right;
-        private int _panelOffsetX = 0;
-        private int _panelOffsetY = 0;
-        private int _panelRightPadding = 10;
+        private int _panelOffsetX =0;
+        private int _panelOffsetY =0;
+        private int _panelRightPadding =10;
         private bool _alternateRows = true;
         private bool _showHeaderStatus = false; // NUEVO
-        private Color _rowAlt1 = Color.FromArgb(16, 16, 28);
-        private Color _rowAlt2 = Color.FromArgb(30, 30, 48);
-        private Color _gridColor = Color.FromArgb(60, 90, 110);
-        private Color _titleColor = Color.FromArgb(195, 215, 230);
+        private Color _rowAlt1 = Color.FromArgb(16,16,28);
+        private Color _rowAlt2 = Color.FromArgb(30,30,48);
+        private Color _gridColor = Color.FromArgb(60,90,110);
+        private Color _titleColor = Color.FromArgb(195,215,230);
         private Color _valueColor = Color.White;
         private bool _showBorder = true;
-        private Color _borderColor = Color.FromArgb(120, 120, 140);
-        private int _columnGap = 8;
-        private int _rowPaddingX = 6;
-        private int _rowPaddingY = 3;
-        private int _headerHeightExtra = 4;
+        private Color _borderColor = Color.FromArgb(120,120,140);
+        private int _columnGap =8;
+        private int _rowPaddingX =6;
+        private int _rowPaddingY =3;
+        private int _headerHeightExtra =4;
 
         // NUEVO: disposición vertical de velocímetros (apila en una sola columna)
         private bool _speedGaugesVertical = false;
         // NUEVO: mostrar/ocultar secciones de velocímetros
         private bool _showSpeedGauges = true;
+        // NUEVO: toggles individuales para cada velocímetro
+        private bool _showDexGauge = true;
+        private bool _showGexGauge = true;
+        private bool _showVannaGauge = true;
+        private bool _showIvSkewGauge = true;
 
         // Velocidad config
         private decimal _dexAbsMin = -50m;
-        private decimal _dexAbsMax = 50m;
+        private decimal _dexAbsMax =50m;
         private decimal _dexPctMin = -100m;
-        private decimal _dexPctMax = 100m;
+        private decimal _dexPctMax =100m;
         // Rango por panel de velocidad (configurable)
         private decimal _gexPctMin = -100m;
-        private decimal _gexPctMax = 100m;
+        private decimal _gexPctMax =100m;
         private decimal _vannaPctMin = -100m;
-        private decimal _vannaPctMax = 100m;
+        private decimal _vannaPctMax =100m;
         private decimal _skewPctMin = -1m;
-        private decimal _skewPctMax = 1m;
+        private decimal _skewPctMax =1m;
         // Altura mínima de fila para paneles de velocidad
-        private int _speedMinRowHeight = 130;
+        private int _speedMinRowHeight =130;
 
         // Gauge styling
-        private readonly Color _gaugeBaseColor = Color.FromArgb(55, 55, 70);
-        private readonly Color _gaugeInnerBaseColor = Color.FromArgb(35, 35, 50);
-        private readonly Color _gaugeProgressColor = Color.FromArgb(40, 110, 230); // azul como en la imagen
-        private readonly Color _gaugeZeroTickColor = Color.FromArgb(30, 200, 90); // verde
+        private readonly Color _gaugeBaseColor = Color.FromArgb(55,55,70);
+        private readonly Color _gaugeInnerBaseColor = Color.FromArgb(35,35,50);
+        private readonly Color _gaugeProgressColor = Color.FromArgb(40,110,230); // azul como en la imagen
+        private readonly Color _gaugeZeroTickColor = Color.FromArgb(30,200,90); // verde
 
         // Gauge options v2
         private bool _useFileWatcher = true;
-        private int _fileWatcherDebounceMs = 300;
+        private int _fileWatcherDebounceMs =300;
         private FileSystemWatcher _fsw;
         private DateTime _fswLastEventUtc = DateTime.MinValue;
         private readonly object _fswSync = new();
 
-        private decimal _gaugeSmoothing = 0.2m; // 0=sin suavizado, 1=sin movimiento (no tiene sentido); típico 0.15-0.3
+        private decimal _gaugeSmoothing =0.2m; //0=sin suavizado,1=sin movimiento (no tiene sentido); típico0.15-0.3
         private bool _gaugeShowArrow = true;
-        private Color _gaugeProgressPositive = Color.FromArgb(60, 220, 120);
-        private Color _gaugeProgressNegative = Color.FromArgb(240, 110, 110);
+        private Color _gaugeProgressPositive = Color.FromArgb(60,220,120);
+        private Color _gaugeProgressNegative = Color.FromArgb(240,110,110);
         private bool _gaugeShowBands = true;
-        private decimal _gaugeBandLow = 0.33m;   // fracción del rango total
-        private decimal _gaugeBandHigh = 0.66m;  // fracción del rango total
-        private Color _gaugeBandLowColor = Color.FromArgb(110, 45, 45);
-        private Color _gaugeBandMidColor = Color.FromArgb(150, 135, 60);
-        private Color _gaugeBandHighColor = Color.FromArgb(45, 110, 60);
-        private bool _gaugeShowDetails = true;   // muestra línea pequeña con abs y %
+        private decimal _gaugeBandLow =0.33m; // fracción del rango total
+        private decimal _gaugeBandHigh =0.66m; // fracción del rango total
+        private Color _gaugeBandLowColor = Color.FromArgb(110,45,45);
+        private Color _gaugeBandMidColor = Color.FromArgb(150,135,60);
+        private Color _gaugeBandHighColor = Color.FromArgb(45,110,60);
+        private bool _gaugeShowDetails = true; // muestra línea pequeña con abs y %
 
         private readonly Dictionary<string, decimal> _smoothValues = new(StringComparer.OrdinalIgnoreCase);
 
@@ -288,104 +293,114 @@ namespace ATAS.Indicators.Technical
         }
 
         #region Properties
-        [Category("Datos"), Display(Name = "Ruta CSV", Order = 0)]
+        [Category("Datos"), Display(Name = "Ruta CSV", Order =0)]
         public string CsvPath { get => _csvPath; set { if (string.Equals(_csvPath, value, StringComparison.OrdinalIgnoreCase)) return; _csvPath = value ?? string.Empty; InitFileWatcher(); ForceReload(); } }
 
-        [Category("Datos"), Display(Name = "Actualizar cada (seg)", Order = 1)]
-        [Range(5, 3600)]
+        [Category("Datos"), Display(Name = "Actualizar cada (seg)", Order =1)]
+        [Range(5,3600)]
         public int RefreshSeconds { get => _refreshSeconds; set { _refreshSeconds = Math.Max(5, value); } }
 
-        [Category("Visual"), Display(Name = "Tamaño fuente base", Order = 0)]
-        [Range(8, 28)]
+        [Category("Visual"), Display(Name = "Tamaño fuente base", Order =0)]
+        [Range(8,28)]
         public int BaseFontSize { get => _baseFontSize; set { var v = Math.Max(8, Math.Min(28, value)); if (v == _baseFontSize) return; _baseFontSize = v; RecreateFonts(); RedrawChart(); } }
 
-        [Category("Panel"), Display(Name = "Posición", Order = 0)]
+        [Category("Panel"), Display(Name = "Posición", Order =0)]
         public PanelAlign PanelPosition { get => _panelAlign; set { if (value == _panelAlign) return; _panelAlign = value; RedrawChart(); } }
 
-        [Category("Panel"), Display(Name = "Offset X", Order = 1)]
-        [Range(-2000, 2000)]
+        [Category("Panel"), Display(Name = "Offset X", Order =1)]
+        [Range(-2000,2000)]
         public int PanelOffsetX { get => _panelOffsetX; set { if (value == _panelOffsetX) return; _panelOffsetX = value; RedrawChart(); } }
 
-        [Category("Panel"), Display(Name = "Offset Y", Order = 2)]
-        [Range(-2000, 2000)]
+        [Category("Panel"), Display(Name = "Offset Y", Order =2)]
+        [Range(-2000,2000)]
         public int PanelOffsetY { get => _panelOffsetY; set { if (value == _panelOffsetY) return; _panelOffsetY = value; RedrawChart(); } }
 
-        [Category("Panel"), Display(Name = "Padding derecho", Order = 3)]
-        [Range(0, 400)]
+        [Category("Panel"), Display(Name = "Padding derecho", Order =3)]
+        [Range(0,400)]
         public int PanelRightPadding { get => _panelRightPadding; set { if (value == _panelRightPadding) return; _panelRightPadding = Math.Max(0, value); RedrawChart(); } }
 
-        [Category("Visual"), Display(Name = "Filas alternas", Order = 1)]
+        [Category("Visual"), Display(Name = "Filas alternas", Order =1)]
         public bool AlternateRows { get => _alternateRows; set { if (value == _alternateRows) return; _alternateRows = value; RedrawChart(); } }
 
-        [Category("Visual"), Display(Name = "Mostrar estado en header", Order = 2)]
+        [Category("Visual"), Display(Name = "Mostrar estado en header", Order =2)]
         public bool ShowHeaderStatus { get => _showHeaderStatus; set { if (value == _showHeaderStatus) return; _showHeaderStatus = value; RedrawChart(); } }
 
-        [Category("Borde"), Display(Name = "Mostrar borde", Order = 0)]
+        [Category("Borde"), Display(Name = "Mostrar borde", Order =0)]
         public bool ShowBorder { get => _showBorder; set { if (value == _showBorder) return; _showBorder = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Mostrar velocímetros", Order = 0)]
+        [Category("Velocidad"), Display(Name = "Mostrar velocímetros", Order =0)]
         public bool ShowSpeedGauges { get => _showSpeedGauges; set { if (_showSpeedGauges == value) return; _showSpeedGauges = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Velocímetros en columna", Order = 1)]
+        [Category("Velocidad"), Display(Name = "Velocímetros en columna", Order =1)]
         public bool SpeedGaugesVertical { get => _speedGaugesVertical; set { if (_speedGaugesVertical == value) return; _speedGaugesVertical = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX abs/min - Min", Order = 2)]
+        // NUEVO: toggles individuales
+        [Category("Velocidad"), Display(Name = "Mostrar DEX", Order =22)]
+        public bool ShowDexGauge { get => _showDexGauge; set { if (_showDexGauge == value) return; _showDexGauge = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Mostrar GEX", Order =23)]
+        public bool ShowGexGauge { get => _showGexGauge; set { if (_showGexGauge == value) return; _showGexGauge = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Mostrar Cash", Order =24)]
+        public bool ShowVannaGauge { get => _showVannaGauge; set { if (_showVannaGauge == value) return; _showVannaGauge = value; RedrawChart(); } }
+        [Category("Velocidad"), Display(Name = "Mostrar Skew", Order =25)]
+        public bool ShowIvSkewGauge { get => _showIvSkewGauge; set { if (_showIvSkewGauge == value) return; _showIvSkewGauge = value; RedrawChart(); } }
+
+        [Category("Velocidad"), Display(Name = "DEX abs/min - Min", Order =2)]
         public decimal DexAbsMin { get => _dexAbsMin; set { _dexAbsMin = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX abs/min - Max", Order = 3)]
+        [Category("Velocidad"), Display(Name = "DEX abs/min - Max", Order =3)]
         public decimal DexAbsMax { get => _dexAbsMax; set { _dexAbsMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX %/min - Min", Order = 4)]
+        [Category("Velocidad"), Display(Name = "DEX %/min - Min", Order =4)]
         public decimal DexPctMin { get => _dexPctMin; set { _dexPctMin = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "DEX %/min - Max", Order = 5)]
+        [Category("Velocidad"), Display(Name = "DEX %/min - Max", Order =5)]
         public decimal DexPctMax { get => _dexPctMax; set { _dexPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "GEX %/min - Min", Order = 6)]
+        [Category("Velocidad"), Display(Name = "GEX %/min - Min", Order =6)]
         public decimal GexPctMin { get => _gexPctMin; set { _gexPctMin = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "GEX %/min - Max", Order = 7)]
+        [Category("Velocidad"), Display(Name = "GEX %/min - Max", Order =7)]
         public decimal GexPctMax { get => _gexPctMax; set { _gexPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Vanna %/min - Min", Order = 8)]
+        [Category("Velocidad"), Display(Name = "Vanna %/min - Min", Order =8)]
         public decimal VannaPctMin { get => _vannaPctMin; set { _vannaPctMin = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Vanna %/min - Max", Order = 9)]
+        [Category("Velocidad"), Display(Name = "Vanna %/min - Max", Order =9)]
         public decimal VannaPctMax { get => _vannaPctMax; set { _vannaPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Skew %/min - Min", Order = 10)]
+        [Category("Velocidad"), Display(Name = "Skew %/min - Min", Order =10)]
         public decimal SkewPctMin { get => _skewPctMin; set { _skewPctMin = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Skew %/min - Max", Order = 11)]
+        [Category("Velocidad"), Display(Name = "Skew %/min - Max", Order =11)]
         public decimal SkewPctMax { get => _skewPctMax; set { _skewPctMax = value; RedrawChart(); } }
 
-        [Category("Velocidad"), Display(Name = "Altura mínima panel (px)", Order = 12)]
-        [Range(80, 300)]
+        [Category("Velocidad"), Display(Name = "Altura mínima panel (px)", Order =12)]
+        [Range(80,300)]
         public int SpeedMinRowHeight { get => _speedMinRowHeight; set { _speedMinRowHeight = Math.Max(80, Math.Min(300, value)); RedrawChart(); } }
 
-        [Category("Datos"), Display(Name = "Usar File Watcher", Order = 2)]
+        [Category("Datos"), Display(Name = "Usar File Watcher", Order =2)]
         public bool UseFileWatcher { get => _useFileWatcher; set { if (_useFileWatcher == value) return; _useFileWatcher = value; InitFileWatcher(); } }
 
-        [Category("Datos"), Display(Name = "Debounce Watcher (ms)", Order = 3)]
-        [Range(50, 5000)]
+        [Category("Datos"), Display(Name = "Debounce Watcher (ms)", Order =3)]
+        [Range(50,5000)]
         public int FileWatcherDebounceMs { get => _fileWatcherDebounceMs; set { _fileWatcherDebounceMs = Math.Max(50, Math.Min(5000, value)); } }
 
-        [Category("Velocidad"), Display(Name = "Suavizado gauge (0-1)", Order = 13)]
-        [Range(0.0, 0.9)]
+        [Category("Velocidad"), Display(Name = "Suavizado gauge (0-1)", Order =13)]
+        [Range(0.0,0.9)]
         public decimal GaugeSmoothing { get => _gaugeSmoothing; set { _gaugeSmoothing = Math.Max(0m, Math.Min(0.9m, value)); } }
 
-        [Category("Velocidad"), Display(Name = "Mostrar flecha dirección", Order = 14)]
+        [Category("Velocidad"), Display(Name = "Mostrar flecha dirección", Order =14)]
         public bool GaugeShowArrow { get => _gaugeShowArrow; set { _gaugeShowArrow = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Mostrar bandas", Order = 15)]
+        [Category("Velocidad"), Display(Name = "Mostrar bandas", Order =15)]
         public bool GaugeShowBands { get => _gaugeShowBands; set { _gaugeShowBands = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Banda baja (% rango)", Order = 16)]
+        [Category("Velocidad"), Display(Name = "Banda baja (% rango)", Order =16)]
         public decimal GaugeBandLow { get => _gaugeBandLow; set { _gaugeBandLow = Math.Max(0m, Math.Min(1m, value)); RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Banda alta (% rango)", Order = 17)]
+        [Category("Velocidad"), Display(Name = "Banda alta (% rango)", Order =17)]
         public decimal GaugeBandHigh { get => _gaugeBandHigh; set { _gaugeBandHigh = Math.Max(0m, Math.Min(1m, value)); RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Color banda baja", Order = 18)]
+        [Category("Velocidad"), Display(Name = "Color banda baja", Order =18)]
         public Color GaugeBandLowColor { get => _gaugeBandLowColor; set { _gaugeBandLowColor = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Color banda media", Order = 19)]
+        [Category("Velocidad"), Display(Name = "Color banda media", Order =19)]
         public Color GaugeBandMidColor { get => _gaugeBandMidColor; set { _gaugeBandMidColor = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Color banda alta", Order = 20)]
+        [Category("Velocidad"), Display(Name = "Color banda alta", Order =20)]
         public Color GaugeBandHighColor { get => _gaugeBandHighColor; set { _gaugeBandHighColor = value; RedrawChart(); } }
-        [Category("Velocidad"), Display(Name = "Mostrar detalles (abs/%)", Order = 21)]
+        [Category("Velocidad"), Display(Name = "Mostrar detalles (abs/%)", Order =21)]
         public bool GaugeShowDetails { get => _gaugeShowDetails; set { _gaugeShowDetails = value; RedrawChart(); } }
         #endregion
 
@@ -399,7 +414,7 @@ namespace ATAS.Indicators.Technical
 
         protected override void OnCalculate(int bar, decimal value)
         {
-            if (bar < CurrentBar - 1) return;
+            if (bar < CurrentBar -1) return;
             _ = TryScheduleRead();
         }
 
@@ -407,7 +422,7 @@ namespace ATAS.Indicators.Technical
         {
             _fontNorm = new RenderFont("Segoe UI", _baseFontSize);
             _fontBold = new RenderFont("Segoe UI", _baseFontSize, FontStyle.Bold);
-            _fontHeader = new RenderFont("Segoe UI Semibold", _baseFontSize + 1, FontStyle.Bold);
+            _fontHeader = new RenderFont("Segoe UI Semibold", _baseFontSize +1, FontStyle.Bold);
         }
 
         private void ForceReload()
@@ -449,12 +464,12 @@ namespace ATAS.Indicators.Technical
             var result = new List<string>();
             var sb = new StringBuilder();
             bool inQuotes = false;
-            for (int i = 0; i < line.Length; i++)
+            for (int i =0; i < line.Length; i++)
             {
                 char c = line[i];
                 if (c == '"')
                 {
-                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                    if (inQuotes && i +1 < line.Length && line[i +1] == '"')
                     { sb.Append('"'); i++; }
                     else inQuotes = !inQuotes;
                 }
@@ -478,7 +493,7 @@ namespace ATAS.Indicators.Technical
             var lines = File.ReadAllLines(_csvPath)
                 .Where(l => !string.IsNullOrWhiteSpace(l))
                 .ToArray();
-            if (lines.Length == 0)
+            if (lines.Length ==0)
             {
                 lock (_sync) _data = map;
                 return;
@@ -488,14 +503,14 @@ namespace ATAS.Indicators.Technical
             // 1) Encabezado + filas: header: A,B,C... y usamos la última fila
             // 2) Clave,Valor por fila (2 columnas)
             var first = SplitCsvLine(lines[0]);
-            if (first.Length >= 3 || (first.Length >= 2 && lines.Length > 1))
+            if (first.Length >=3 || (first.Length >=2 && lines.Length >1))
             {
                 // Intentar formato 1: header + última fila
                 var header = first;
                 var lastRow = SplitCsvLine(lines[^1]);
                 if (lastRow.Length == header.Length)
                 {
-                    for (int i = 0; i < header.Length; i++)
+                    for (int i =0; i < header.Length; i++)
                     {
                         var key = header[i];
                         if (string.IsNullOrWhiteSpace(key)) continue;
@@ -503,13 +518,13 @@ namespace ATAS.Indicators.Technical
                         map[key] = value;
                     }
                 }
-                else if (first.Length == 2 && lines.All(l => SplitCsvLine(l).Length == 2))
+                else if (first.Length ==2 && lines.All(l => SplitCsvLine(l).Length ==2))
                 {
                     // Degrada a formato 2
                     foreach (var l in lines)
                     {
                         var parts = SplitCsvLine(l);
-                        if (parts.Length < 2) continue;
+                        if (parts.Length <2) continue;
                         var key = parts[0];
                         var value = parts[1];
                         if (!string.IsNullOrWhiteSpace(key)) map[key] = value;
@@ -521,7 +536,7 @@ namespace ATAS.Indicators.Technical
                     var headerGuess = first;
                     var dataGuess = SplitCsvLine(lines[Math.Min(1, lines.Length - 1)]);
                     var n = Math.Min(headerGuess.Length, dataGuess.Length);
-                    for (int i = 0; i < n; i++)
+                    for (int i =0; i < n; i++)
                     {
                         var key = headerGuess[i];
                         if (string.IsNullOrWhiteSpace(key)) continue;
@@ -529,13 +544,13 @@ namespace ATAS.Indicators.Technical
                     }
                 }
             }
-            else if (first.Length == 2)
+            else if (first.Length ==2)
             {
                 // Formato 2: clave,valor por línea
                 foreach (var l in lines)
                 {
                     var parts = SplitCsvLine(l);
-                    if (parts.Length < 2) continue;
+                    if (parts.Length <2) continue;
                     var key = parts[0];
                     var value = parts[1];
                     if (!string.IsNullOrWhiteSpace(key)) map[key] = value;
@@ -615,12 +630,12 @@ namespace ATAS.Indicators.Technical
             {
                 var header = first;
                 var lastRow = SplitCsvLine(lines[^1]);
-                if (lastRow.Length == header.Length && lines.Length >= 3)
+                if (lastRow.Length == header.Length && lines.Length >=3)
                 {
                     // Busca índices de columnas relevantes
                     int colGex = -1;
                     var gexCols = new[] { "NetGEX", "Net Gex", "NetGex", "GEXNet", "GEX" };
-                    for (int i = 0; i < header.Length && colGex < 0; i++)
+                    for (int i =0; i < header.Length && colGex <0; i++)
                     {
                         foreach (var key in gexCols)
                         {
@@ -630,7 +645,7 @@ namespace ATAS.Indicators.Technical
                     }
                     int colTs = -1;
                     var tsCols = new[] { "Timestamp", "TimeStamp", "LastUpdate", "Last Update" };
-                    for (int i = 0; i < header.Length && colTs < 0; i++)
+                    for (int i =0; i < header.Length && colTs <0; i++)
                     {
                         foreach (var key in tsCols)
                         {
@@ -642,7 +657,7 @@ namespace ATAS.Indicators.Technical
                     // Índices de Call/Put Delta
                     int colCall = -1;
                     var callCols = new[] { "net_call_dex", "call_dex", "Call Delta", "CallDelta" };
-                    for (int i = 0; i < header.Length && colCall < 0; i++)
+                    for (int i =0; i < header.Length && colCall <0; i++)
                     {
                         foreach (var key in callCols)
                         {
@@ -652,7 +667,7 @@ namespace ATAS.Indicators.Technical
                     }
                     int colPut = -1;
                     var putCols = new[] { "net_put_dex", "put_dex", "Put Delta", "PutDelta" };
-                    for (int i = 0; i < header.Length && colPut < 0; i++)
+                    for (int i =0; i < header.Length && colPut <0; i++)
                     {
                         foreach (var key in putCols)
                         {
@@ -665,52 +680,52 @@ namespace ATAS.Indicators.Technical
                     int colCashCall = -1;
                     foreach (var key in new[] { "CashCall", "Cash Call" })
                     {
-                        for (int i = 0; i < header.Length && colCashCall < 0; i++)
+                        for (int i =0; i < header.Length && colCashCall <0; i++)
                             if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colCashCall = i; break; }
-                        if (colCashCall >= 0) break;
+                        if (colCashCall >=0) break;
                     }
                     int colCashPut = -1;
                     foreach (var key in new[] { "CashPut", "Cash Put" })
                     {
-                        for (int i = 0; i < header.Length && colCashPut < 0; i++)
+                        for (int i =0; i < header.Length && colCashPut <0; i++)
                             if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colCashPut = i; break; }
-                        if (colCashPut >= 0) break;
+                        if (colCashPut >=0) break;
                     }
 
                     // Índices para IV Call/Put
                     int colIvCall = -1;
                     foreach (var key in new[] { "IVCall", "IV Call", "Call IV" })
                     {
-                        for (int i = 0; i < header.Length && colIvCall < 0; i++)
+                        for (int i =0; i < header.Length && colIvCall <0; i++)
                             if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colIvCall = i; break; }
-                        if (colIvCall >= 0) break;
+                        if (colIvCall >=0) break;
                     }
                     int colIvPut = -1;
                     foreach (var key in new[] { "IVPut", "IV Put", "Put IV" })
                     {
-                        for (int i = 0; i < header.Length && colIvPut < 0; i++)
+                        for (int i =0; i < header.Length && colIvPut <0; i++)
                             if (string.Equals(header[i], key, StringComparison.OrdinalIgnoreCase)) { colIvPut = i; break; }
-                        if (colIvPut >= 0) break;
+                        if (colIvPut >=0) break;
                     }
                     var prevRow = SplitCsvLine(lines[^2]);
                     if (prevRow.Length == header.Length)
                     {
                         // Última fila = actual, Penúltima = previo
-                        if (colGex >= 0)
+                        if (colGex >=0)
                         {
                             if (colGex < lastRow.Length && TryParseNumber(lastRow[colGex], out var gexNow, out _, out _, out _))
                                 gexCurrFromRows = gexNow;
                             if (colGex < prevRow.Length && TryParseNumber(prevRow[colGex], out var gexPrev, out _, out _, out _))
                                 gexPrevFromRows = gexPrev;
                         }
-                        if (colCall >= 0)
+                        if (colCall >=0)
                         {
                             if (colCall < lastRow.Length && TryParseNumber(lastRow[colCall], out var cNow, out _, out _, out _))
                                 callCurrFromRows = cNow;
                             if (colCall < prevRow.Length && TryParseNumber(prevRow[colCall], out var cPrev, out _, out _, out _))
                                 callPrevFromRows = cPrev;
                         }
-                        if (colPut >= 0)
+                        if (colPut >=0)
                         {
                             if (colPut < lastRow.Length && TryParseNumber(lastRow[colPut], out var pNow, out _, out _, out _))
                                 putCurrFromRows = pNow;
@@ -718,14 +733,14 @@ namespace ATAS.Indicators.Technical
                                 putPrevFromRows = pPrev;
                         }
 
-                        if (colCashCall >= 0)
+                        if (colCashCall >=0)
                         {
                             if (colCashCall < lastRow.Length && TryParseNumber(lastRow[colCashCall], out var ccNow, out _, out _, out _))
                                 cashCallCurrFromRows = ccNow;
                             if (colCashCall < prevRow.Length && TryParseNumber(prevRow[colCashCall], out var ccPrev, out _, out _, out _))
                                 cashCallPrevFromRows = ccPrev;
                         }
-                        if (colCashPut >= 0)
+                        if (colCashPut >=0)
                         {
                             if (colCashPut < lastRow.Length && TryParseNumber(lastRow[colCashPut], out var cpNow, out _, out _, out _))
                                 cashPutCurrFromRows = cpNow;
@@ -733,38 +748,38 @@ namespace ATAS.Indicators.Technical
                                 cashPutPrevFromRows = cpPrev;
                         }
 
-                        if (colIvCall >= 0)
+                        if (colIvCall >=0)
                         {
                             // Escanear desde el final y tomar los dos últimos valores no nulos/ni cero
                             var found = new List<decimal>(2);
-                            for (int r = lines.Length - 1; r >= 1 && found.Count < 2; r--)
+                            for (int r = lines.Length -1; r >=1 && found.Count <2; r--)
                             {
                                 var row = SplitCsvLine(lines[r]);
                                 if (colIvCall < row.Length && TryParseNumber(row[colIvCall], out var val, out _, out _, out _))
                                 {
-                                    if (val != 0m) found.Add(val);
+                                    if (val !=0m) found.Add(val);
                                 }
                             }
-                            if (found.Count > 0) ivCallCurrFromRows = found[0];
-                            if (found.Count > 1) ivCallPrevFromRows = found[1];
+                            if (found.Count >0) ivCallCurrFromRows = found[0];
+                            if (found.Count >1) ivCallPrevFromRows = found[1];
                         }
-                        if (colIvPut >= 0)
+                        if (colIvPut >=0)
                         {
                             // Escanear desde el final y tomar los dos últimos valores no nulos/ni cero
                             var found = new List<decimal>(2);
-                            for (int r = lines.Length - 1; r >= 1 && found.Count < 2; r--)
+                            for (int r = lines.Length -1; r >=1 && found.Count <2; r--)
                             {
                                 var row = SplitCsvLine(lines[r]);
                                 if (colIvPut < row.Length && TryParseNumber(row[colIvPut], out var val, out _, out _, out _))
                                 {
-                                    if (val != 0m) found.Add(val);
+                                    if (val !=0m) found.Add(val);
                                 }
                             }
-                            if (found.Count > 0) ivPutCurrFromRows = found[0];
-                            if (found.Count > 1) ivPutPrevFromRows = found[1];
+                            if (found.Count >0) ivPutCurrFromRows = found[0];
+                            if (found.Count >1) ivPutPrevFromRows = found[1];
                         }
 
-                        if (colTs >= 0)
+                        if (colTs >=0)
                         {
                             if (colTs < lastRow.Length && DateTime.TryParse(lastRow[colTs], CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var dt1))
                                 tsCurrRow = dt1;
@@ -885,12 +900,11 @@ namespace ATAS.Indicators.Technical
             int textH = Math.Max(normH, boldH);
 
             // Geometría
-            int rowH = Math.Max(_baseFontSize + _rowPaddingY * 2, textH + _rowPaddingY * 2 + 2);
-            int headerH = Math.Max(_baseFontSize + _headerHeightExtra + 4, headerTextH + _headerHeightExtra + 4);
+            int rowH = Math.Max(_baseFontSize + _rowPaddingY *2, textH + _rowPaddingY *2 +2);
+            int headerH = Math.Max(_baseFontSize + _headerHeightExtra +4, headerTextH + _headerHeightExtra +4);
 
             // Calcular ancho de columnas basado en contenido aproximado
             int[] sectionWidths = new int[_sections.Count];
-            int totalWidth = 0;
 
             // Detecta qué secciones son de velocímetro
             bool IsSpeedMetric(Metric m) => m.Keys != null && (
@@ -900,65 +914,84 @@ namespace ATAS.Indicators.Technical
                 m.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal))
             );
             bool IsSpeedSection(Section s) => s.Items != null && s.Items.Any(IsSpeedMetric);
-
-            var speedIndices = new List<int>();
-
-            for (int c = 0; c < _sections.Count; c++)
+            bool IsSpecificSpeedEnabled(Section s)
             {
-                var w = MeasureText(context, _sections[c].Title, _fontHeader) + 20; // header base
+                if (!IsSpeedSection(s)) return true;
+                // Usa la clave del ítem para decidir
+                foreach (var it in s.Items)
+                {
+                    if (it.Keys != null)
+                    {
+                        if (it.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal))) return _showDexGauge;
+                        if (it.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal))) return _showGexGauge;
+                        if (it.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal))) return _showVannaGauge;
+                        if (it.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal))) return _showIvSkewGauge;
+                    }
+                }
+                return true;
+            }
+            bool IsSectionVisible(int idx)
+            {
+                var s = _sections[idx];
+                if (!IsSpeedSection(s)) return true;
+                if (!_showSpeedGauges) return false;
+                return IsSpecificSpeedEnabled(s);
+            }
+
+            // Precalcular anchos
+            for (int c =0; c < _sections.Count; c++)
+            {
+                var w = MeasureText(context, _sections[c].Title, _fontHeader) +20; // header base
                 foreach (var m in _sections[c].Items)
                 {
                     int wTitle = MeasureText(context, m.Title + " ", _fontNorm);
                     string tmpVal = GetValue(snapshot, m);
                     int wValue = MeasureText(context, tmpVal, _fontBold);
-                    w = Math.Max(w, wTitle + wValue + 22);
+                    w = Math.Max(w, wTitle + wValue +22);
                 }
                 sectionWidths[c] = Math.Max(160, Math.Min(420, w));
-                if (_showSpeedGauges && IsSpeedSection(_sections[c]))
-                    speedIndices.Add(c);
             }
 
-            // Determina columnas visibles y ancho total
+            // Construir listas de índices visibles
+            var visibleIdx = Enumerable.Range(0, _sections.Count).Where(IsSectionVisible).ToList();
+            var speedVisibleIdx = visibleIdx.Where(i => IsSpeedSection(_sections[i])).ToList();
+            var nonSpeedVisibleIdx = visibleIdx.Where(i => !IsSpeedSection(_sections[i])).ToList();
+
+            // Determinar columnas y ancho total
             int numColumns;
-            int speedColumnWidth = 0;
-            if (!_showSpeedGauges)
+            int totalWidth =0;
+            int speedColumnWidth =0;
+            if (_showSpeedGauges && _speedGaugesVertical && speedVisibleIdx.Count >0)
             {
-                var nonSpeed = Enumerable.Range(0, _sections.Count).Where(i => !IsSpeedSection(_sections[i])).ToArray();
-                numColumns = nonSpeed.Length;
-                totalWidth = nonSpeed.Sum(i => sectionWidths[i]);
-            }
-            else if (_speedGaugesVertical && speedIndices.Count > 0)
-            {
-                speedColumnWidth = speedIndices.Select(i => sectionWidths[i]).Max();
-                var nonSpeed = Enumerable.Range(0, _sections.Count).Where(i => !speedIndices.Contains(i)).ToArray();
-                numColumns = 1 + nonSpeed.Length; // 1 columna para todos los velocímetros + el resto
-                totalWidth = speedColumnWidth + nonSpeed.Sum(i => sectionWidths[i]);
+                speedColumnWidth = speedVisibleIdx.Select(i => sectionWidths[i]).Max();
+                numColumns =1 + nonSpeedVisibleIdx.Count;
+                totalWidth = speedColumnWidth + nonSpeedVisibleIdx.Sum(i => sectionWidths[i]);
             }
             else
             {
-                numColumns = _sections.Count;
-                totalWidth = sectionWidths.Sum();
+                numColumns = visibleIdx.Count;
+                totalWidth = visibleIdx.Sum(i => sectionWidths[i]);
             }
 
-            if (numColumns > 0)
-                totalWidth += _columnGap * (numColumns - 1);
+            if (numColumns >0)
+                totalWidth += _columnGap * (numColumns -1);
 
-            int lastBar = CurrentBar - 1;
-            int xLast = 800;
-            if (lastBar >= 0)
+            int lastBar = CurrentBar -1;
+            int xLast =800;
+            if (lastBar >=0)
             {
                 var tmp = ChartInfo.PriceChartContainer.GetXByBar(lastBar, false);
-                if (tmp > 0) xLast = tmp;
+                if (tmp >0) xLast = tmp;
             }
 
             int baseX;
             switch (_panelAlign)
             {
                 case PanelAlign.Left:
-                    baseX = 0;
+                    baseX =0;
                     break;
                 case PanelAlign.Center:
-                    baseX = Math.Max(0, (xLast - totalWidth) / 2);
+                    baseX = Math.Max(0, (xLast - totalWidth) /2);
                     break;
                 case PanelAlign.Right:
                 default:
@@ -979,22 +1012,22 @@ namespace ATAS.Indicators.Technical
             int speedColumnX = panelLeft;
             int speedColumnY = panelTop;
             bool speedStarted = false;
-            int lastSpeedIndex = speedIndices.Count > 0 ? speedIndices[^1] : -1;
+            int lastSpeedIndex = speedVisibleIdx.Count >0 ? speedVisibleIdx[^1] : -1;
+            bool statusDrawn = false;
 
-            for (int c = 0; c < _sections.Count; c++)
+            for (int c =0; c < _sections.Count; c++)
             {
-                var sec = _sections[c];
-                bool sectionIsSpeed = IsSpeedSection(sec);
-
-                // Si están ocultos los velocímetros, saltar estas secciones
-                if (!_showSpeedGauges && sectionIsSpeed)
+                if (!visibleIdx.Contains(c))
                     continue;
+
+                var sec = _sections[c];
+                bool sectionIsSpeed = speedVisibleIdx.Contains(c);
 
                 int w;
                 int colTop;
                 int x;
 
-                if (_showSpeedGauges && _speedGaugesVertical && sectionIsSpeed && speedIndices.Count > 0)
+                if (_showSpeedGauges && _speedGaugesVertical && sectionIsSpeed && speedVisibleIdx.Count >0)
                 {
                     w = speedColumnWidth;
                     if (!speedStarted)
@@ -1016,167 +1049,105 @@ namespace ATAS.Indicators.Technical
                 // Header
                 var headerRect = new Rectangle(x, colTop, w, headerH);
                 context.FillRectangle(sec.HeaderColor, headerRect);
-                int headerY = colTop + (headerH - headerTextH) / 2;
+                int headerY = colTop + (headerH - headerTextH) /2;
                 int headerTextW = MeasureText(context, sec.Title, _fontHeader);
-                int headerX = x + (w - headerTextW) / 2; // centrado horizontal
+                int headerX = x + (w - headerTextW) /2; // centrado horizontal
                 context.DrawString($"{sec.Title}", _fontHeader, Color.White, headerX, headerY);
 
-                // Estado pequeño opcional (no se muestra en UPDATE)
-                if (_showHeaderStatus && c == 0 && !string.IsNullOrWhiteSpace(status) && !sec.Title.Equals("UPDATE", StringComparison.OrdinalIgnoreCase))
+                // Estado pequeño opcional: en la primera sección visible que no sea UPDATE
+                if (_showHeaderStatus && !statusDrawn && !sec.Title.Equals("UPDATE", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(status))
                 {
                     var st = status;
                     int stW = MeasureText(context, st, _fontNorm);
-                    if (stW < w - 10)
-                        context.DrawString(st, _fontNorm, Color.FromArgb(230, 240, 240, 240), x + w - stW - 6, headerY);
+                    if (stW < w -10)
+                        context.DrawString(st, _fontNorm, Color.FromArgb(230,240,240,240), x + w - stW -6, headerY);
+                    statusDrawn = true;
                 }
 
                 // Rows
-                int y = colTop + headerH + 2;
+                int y = colTop + headerH +2;
 
-                // Layout horizontal especial para VELOCIDAD (no usado actualmente)
-                if (sec.Title.Equals("VELOCIDAD", StringComparison.OrdinalIgnoreCase) && sec.Items.Length > 0)
+                for (int i =0; i < sec.Items.Length; i++)
                 {
-                    int rowHVel = Math.Max(rowH, _speedMinRowHeight);
-                    var rectVel = new Rectangle(x, y, w, rowHVel);
-                    if (_alternateRows)
-                        context.FillRectangle(_rowAlt1, rectVel);
+                    var m = sec.Items[i];
 
-                    int n = sec.Items.Length;
-                    int subGap = 6;
-                    int subW = Math.Max(80, (w - subGap * (n + 1)) / n);
-                    for (int i = 0; i < n; i++)
+                    // Paneles individuales de VELOCIDAD con anillos (como el primero)
+                    bool isSpeedMetric = m.Keys != null && (
+                        m.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)) ||
+                        m.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)) ||
+                        m.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)) ||
+                        m.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal))
+                    );
+                    if (isSpeedMetric)
                     {
-                        int left = x + subGap + i * (subW + subGap);
-                        var subRect = new Rectangle(left, y, subW, rowHVel);
+                        int rowHVel = Math.Max(rowH, _speedMinRowHeight);
+                        var rectVel = new Rectangle(x, y, w, rowHVel);
+                        if (_alternateRows)
+                            context.FillRectangle((i %2 ==0) ? _rowAlt1 : _rowAlt2, rectVel);
 
-                        var mi = sec.Items[i];
                         decimal? gaugeVal;
                         decimal minRange;
                         decimal maxRange;
+                        var metricForDraw = m; // por defecto usa la métrica original
 
-                        // Resolver métrica
-                        if (mi.Keys != null && mi.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)))
+                        if (m.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)))
                         {
-                            gaugeVal = gexPct;
-                            minRange = _dexPctMin; maxRange = _dexPctMax;
+                            gaugeVal = dexPct; minRange = _dexPctMin; maxRange = _dexPctMax;
+                            metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                         }
-                        else if (mi.Keys != null && mi.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)))
+                        else if (m.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)))
                         {
-                            gaugeVal = dexPct;
-                            minRange = _dexPctMin; maxRange = _dexPctMax;
+                            gaugeVal = gexPct; minRange = _gexPctMin; maxRange = _gexPctMax;
+                            metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                         }
-                        else if (mi.Keys != null && mi.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)))
+                        else if (m.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)))
                         {
-                            // Velocidad Cash: porcentaje (promedio de difs relativas con signo)
-                            gaugeVal = vannaPct;
-                            minRange = _vannaPctMin; maxRange = _vannaPctMax;
+                            // Velocidad Cash (%): usa rango VannaPct
+                            gaugeVal = vannaPct; minRange = _vannaPctMin; maxRange = _vannaPctMax;
+                            metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                         }
-                        else if (mi.Keys != null && mi.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal)))
+                        else if (m.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal)))
                         {
-                            gaugeVal = ivSkewPct;
-                            minRange = _skewPctMin; maxRange = _skewPctMax; // usa rango configurable
+                            gaugeVal = ivSkewPct; minRange = _skewPctMin; maxRange = _skewPctMax;
+                            metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
                         }
-                        else
-                        {
-                            gaugeVal = null; minRange = _dexPctMin; maxRange = _dexPctMax;
-                        }
+                        else { gaugeVal = null; minRange = _dexPctMin; maxRange = _dexPctMax; }
 
-                        DrawSpeedometer(context, subRect, gaugeVal, minRange, maxRange, mi);
+                        DrawSpeedometer(context, rectVel, gaugeVal, minRange, maxRange, metricForDraw);
 
-                        // separadores opcionales
                         if (_showBorder)
-                            context.DrawRectangle(new RenderPen(_borderColor, 1), subRect);
+                            context.DrawRectangle(new RenderPen(_borderColor,1), rectVel);
+
+                        y += rowHVel;
+                        continue;
                     }
 
-                    if (_showBorder)
-                        context.DrawRectangle(new RenderPen(_borderColor, 1), rectVel);
+                    var rect = new Rectangle(x, y, w, rowH);
+                    if (_alternateRows)
+                        context.FillRectangle((i %2 ==0) ? _rowAlt1 : _rowAlt2, rect);
 
-                    y += rowHVel;
-                }
-                else
-                {
-                    for (int i = 0; i < sec.Items.Length; i++)
-                    {
-                        var m = sec.Items[i];
+                    // grid bottom line (ligeramente por encima del borde para evitar superposición)
+                    context.DrawLine(new RenderPen(_gridColor,1), x, y + rowH -1, x + w, y + rowH -1);
 
-                        // Paneles individuales de VELOCIDAD con anillos (como el primero)
-                        bool isSpeedMetric = m.Keys != null && (
-                            m.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)) ||
-                            m.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)) ||
-                            m.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)) ||
-                            m.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal))
-                        );
-                        if (isSpeedMetric)
-                        {
-                            int rowHVel = Math.Max(rowH, _speedMinRowHeight);
-                            var rectVel = new Rectangle(x, y, w, rowHVel);
-                            if (_alternateRows)
-                                context.FillRectangle((i % 2 == 0) ? _rowAlt1 : _rowAlt2, rectVel);
+                    // title (centrado vertical)
+                    int titleH = normH;
+                    int titleY = y + (rowH - titleH) /2;
+                    context.DrawString(m.Title, _fontNorm, _titleColor, x + _rowPaddingX, titleY);
 
-                            decimal? gaugeVal;
-                            decimal minRange;
-                            decimal maxRange;
-                            var metricForDraw = m; // por defecto usa la métrica original
+                    // value (centrado vertical)
+                    var value = GetValue(snapshot, m);
+                    var (valText, valColor) = FormatValue(value, m);
+                    int valWidth = MeasureText(context, valText, _fontBold);
+                    int valH = boldH;
+                    int valY = y + (rowH - valH) /2;
+                    context.DrawString(valText, _fontBold, valColor, x + w - valWidth - _rowPaddingX, valY);
 
-                            if (m.Keys.Any(k => string.Equals(k, "__DexPct__", StringComparison.Ordinal)))
-                            {
-                                gaugeVal = dexPct; minRange = _dexPctMin; maxRange = _dexPctMax;
-                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
-                            }
-                            else if (m.Keys.Any(k => string.Equals(k, "__GexPct__", StringComparison.Ordinal)))
-                            {
-                                gaugeVal = gexPct; minRange = _gexPctMin; maxRange = _gexPctMax;
-                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
-                            }
-                            else if (m.Keys.Any(k => string.Equals(k, "__VannaPct__", StringComparison.Ordinal)))
-                            {
-                                // Velocidad Cash (%): usa rango VannaPct
-                                gaugeVal = vannaPct; minRange = _vannaPctMin; maxRange = _vannaPctMax;
-                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
-                            }
-                            else if (m.Keys.Any(k => string.Equals(k, "__IvSkewPct__", StringComparison.Ordinal)))
-                            {
-                                gaugeVal = ivSkewPct; minRange = _skewPctMin; maxRange = _skewPctMax;
-                                metricForDraw = new Metric { Title = m.Title, Keys = m.Keys, Format = "+0;-0;0", Unit = "%" };
-                            }
-                            else { gaugeVal = null; minRange = _dexPctMin; maxRange = _dexPctMax; }
-
-                            DrawSpeedometer(context, rectVel, gaugeVal, minRange, maxRange, metricForDraw);
-
-                            if (_showBorder)
-                                context.DrawRectangle(new RenderPen(_borderColor, 1), rectVel);
-
-                            y += rowHVel;
-                            continue;
-                        }
-
-                        var rect = new Rectangle(x, y, w, rowH);
-                        if (_alternateRows)
-                            context.FillRectangle((i % 2 == 0) ? _rowAlt1 : _rowAlt2, rect);
-
-                        // grid bottom line (ligeramente por encima del borde para evitar superposición)
-                        context.DrawLine(new RenderPen(_gridColor, 1), x, y + rowH - 1, x + w, y + rowH - 1);
-
-                        // title (centrado vertical)
-                        int titleH = normH;
-                        int titleY = y + (rowH - titleH) / 2;
-                        context.DrawString(m.Title, _fontNorm, _titleColor, x + _rowPaddingX, titleY);
-
-                        // value (centrado vertical)
-                        var value = GetValue(snapshot, m);
-                        var (valText, valColor) = FormatValue(value, m);
-                        int valWidth = MeasureText(context, valText, _fontBold);
-                        int valH = boldH;
-                        int valY = y + (rowH - valH) / 2;
-                        context.DrawString(valText, _fontBold, valColor, x + w - valWidth - _rowPaddingX, valY);
-
-                        y += rowH;
-                    }
+                    y += rowH;
                 }
 
                 // Col/borde por sección
                 if (_showBorder)
-                    context.DrawRectangle(new RenderPen(_borderColor, 1), new Rectangle(x, colTop, w, y - colTop));
+                    context.DrawRectangle(new RenderPen(_borderColor,1), new Rectangle(x, colTop, w, y - colTop));
 
                 // Avance X según modalidad
                 if (_showSpeedGauges && _speedGaugesVertical && sectionIsSpeed)
@@ -1191,7 +1162,7 @@ namespace ATAS.Indicators.Technical
                 }
                 else
                 {
-                    // secciones normales: avanzan X como siempre
+                    // secciones normales: advancen X como siempre
                     currentX += w + _columnGap;
                 }
             }
@@ -1230,13 +1201,13 @@ namespace ATAS.Indicators.Technical
             // Sticky logic
             if (TryParseNumber(raw, out var num, out _, out _, out _))
             {
-                if (num > 0m)
+                if (num >0m)
                 {
                     lock (_sync) _stickyPositive[metric.Title] = raw;
                     return raw;
                 }
             }
-            if (string.IsNullOrWhiteSpace(raw) || raw == "---" || !TryParseNumber(raw, out num, out _, out _, out _) || num <= 0m)
+            if (string.IsNullOrWhiteSpace(raw) || raw == "---" || !TryParseNumber(raw, out num, out _, out _, out _) || num <=0m)
             {
                 lock (_sync)
                 {
@@ -1265,14 +1236,14 @@ namespace ATAS.Indicators.Technical
             }
 
             decimal? callPct = null, putPct = null;
-            if (callPrev.HasValue && callPrev.Value != 0m && callCurr.HasValue)
-                callPct = ((callCurr.Value - callPrev.Value) / (callPrev.Value)) * 100m;
-            if (putPrev.HasValue && putPrev.Value != 0m && putCurr.HasValue)
-                putPct = ((putCurr.Value - putPrev.Value) / (putPrev.Value)) * 100m;
+            if (callPrev.HasValue && callPrev.Value !=0m && callCurr.HasValue)
+                callPct = ((callCurr.Value - callPrev.Value) / (callPrev.Value)) *100m;
+            if (putPrev.HasValue && putPrev.Value !=0m && putCurr.HasValue)
+                putPct = ((putCurr.Value - putPrev.Value) / (putPrev.Value)) *100m;
 
             decimal? avgPct = null;
             if (callPct.HasValue && putPct.HasValue)
-                avgPct = (callPct.Value + putPct.Value) / 2m;
+                avgPct = (callPct.Value + putPct.Value) /2m;
             else if (callPct.HasValue)
                 avgPct = callPct.Value;
             else if (putPct.HasValue)
@@ -1298,27 +1269,27 @@ namespace ATAS.Indicators.Technical
             var series = ParseSeries(histRaw);
             if (TryParseNumber(currRaw ?? string.Empty, out var curr, out _, out _, out _))
             {
-                if (series.Count == 0 || series[^1] != curr)
+                if (series.Count ==0 || series[^1] != curr)
                     series.Add(curr);
             }
 
-            if (series.Count < 2)
+            if (series.Count <2)
                 return (null, null);
 
             // diferencias por paso (asumimos minuto entre muestras)
             var diffs = new List<decimal>();
             var pctChanges = new List<decimal>();
-            for (int i = 1; i < series.Count; i++)
+            for (int i =1; i < series.Count; i++)
             {
-                var prev = series[i - 1];
+                var prev = series[i -1];
                 var now = series[i];
                 var d = now - prev;
                 diffs.Add(Math.Abs(d));
-                var denom = Math.Max(Math.Abs(prev), 1e-8m);
-                pctChanges.Add((d / denom) * 100m);
+                var denom = Math.Max(Math.Abs(prev),1e-8m);
+                pctChanges.Add((d / denom) *100m);
             }
 
-            if (diffs.Count == 0) return (null, null);
+            if (diffs.Count ==0) return (null, null);
             var absAvg = diffs.Average();
             var pctAvg = pctChanges.Average();
             // recorta a [-100,100] para pct, como guía visual
@@ -1336,7 +1307,7 @@ namespace ATAS.Indicators.Technical
             foreach (var t in tokens)
             {
                 var s = t.Trim();
-                if (s.Length == 0) continue;
+                if (s.Length ==0) continue;
                 // normaliza coma decimal si viniera con coma
                 s = s.Replace("%", string.Empty);
                 if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ||
@@ -1375,8 +1346,8 @@ namespace ATAS.Indicators.Technical
         }
 
         private static string Normalize(string s) => new string((s ?? string.Empty)
-            .Where(char.IsLetterOrDigit)
-            .ToArray());
+ .Where(char.IsLetterOrDigit)
+ .ToArray());
 
         private (string text, Color color) FormatValue(string raw, Metric metric)
         {
@@ -1400,8 +1371,8 @@ namespace ATAS.Indicators.Technical
                 // Color base por signo
                 var col = num switch
                 {
-                    > 0m => Color.FromArgb(60, 220, 120),
-                    < 0m => Color.FromArgb(240, 100, 100),
+                    >0m => Color.FromArgb(60,220,120),
+                    <0m => Color.FromArgb(240,100,100),
                     _ => _valueColor
                 };
 
@@ -1411,15 +1382,15 @@ namespace ATAS.Indicators.Technical
                 {
                     if (string.Equals(title, "Put Vol", StringComparison.OrdinalIgnoreCase))
                     {
-                        col = Color.FromArgb(240, 100, 100); // siempre rojo
+                        col = Color.FromArgb(240,100,100); // siempre rojo
                     }
                     else if (string.Equals(title, "Put OI", StringComparison.OrdinalIgnoreCase))
                     {
-                        col = Color.FromArgb(240, 100, 100); // siempre rojo
+                        col = Color.FromArgb(240,100,100); // siempre rojo
                     }
                     else if (string.Equals(title, "IV Put", StringComparison.OrdinalIgnoreCase))
                     {
-                        col = Color.FromArgb(240, 100, 100); // siempre rojo
+                        col = Color.FromArgb(240,100,100); // siempre rojo
                     }
                     // Net Vol / Net Delta / Net Gex: ya usan color por signo (default)
                 }
@@ -1429,9 +1400,9 @@ namespace ATAS.Indicators.Technical
             // Categórico
             var up = raw.ToUpperInvariant();
             if (up.Contains("HIGH") || up.Contains("STRONG") || up.Contains("ALIGNED") || up.Contains("STABLE") || up.Contains("BULL"))
-                return (raw, Color.FromArgb(60, 220, 120));
+                return (raw, Color.FromArgb(60,220,120));
             if (up.Contains("LOW") || up.Contains("WEAK") || up.Contains("WARNING") || up.Contains("DIVERG") || up.Contains("BEAR"))
-                return (raw, Color.FromArgb(240, 120, 120));
+                return (raw, Color.FromArgb(240,120,120));
             if (up.Contains("MONITOR") || up.Contains("QUIET") || up.Contains("NEUTRAL"))
                 return (raw, Color.Khaki);
 
@@ -1458,9 +1429,9 @@ namespace ATAS.Indicators.Technical
                 value = tmp;
             }
 
-            if (hadK) value *= 1_000m;
-            if (hadM) value *= 1_000_000m;
-            if (hadPercent) value /= 100m;
+            if (hadK) value *=1_000m;
+            if (hadM) value *=1_000_000m;
+            if (hadPercent) value /=100m;
             return true;
         }
 
@@ -1473,9 +1444,9 @@ namespace ATAS.Indicators.Technical
             {
                 // Formato corto
                 var abs = Math.Abs(num);
-                if (abs >= 1_000_000m) text = (num / 1_000_000m).ToString("0.#", CultureInfo.InvariantCulture) + "M";
-                else if (abs >= 1_000m) text = (num / 1_000m).ToString("0.#", CultureInfo.InvariantCulture) + "K";
-                else if (abs < 1 && abs > 0) text = num.ToString("0.###", CultureInfo.InvariantCulture);
+                if (abs >=1_000_000m) text = (num /1_000_000m).ToString("0.#", CultureInfo.InvariantCulture) + "M";
+                else if (abs >=1_000m) text = (num /1_000m).ToString("0.#", CultureInfo.InvariantCulture) + "K";
+                else if (abs <1 && abs >0) text = num.ToString("0.###", CultureInfo.InvariantCulture);
                 else text = num.ToString("0.##", CultureInfo.InvariantCulture);
 
                 // Si unidad explícita forzada, reemplaza el auto-sufijo
@@ -1502,8 +1473,8 @@ namespace ATAS.Indicators.Technical
             }
             catch { }
             // Fallback aproximado
-            var factor = font.Style.HasFlag(FontStyle.Bold) ? 0.66 : 0.58;
-            return (int)Math.Round(((text?.Length ?? 0) + 1) * font.Size * factor);
+            var factor = font.Style.HasFlag(FontStyle.Bold) ?0.66 :0.58;
+            return (int)Math.Round(((text?.Length ??0) +1) * font.Size * factor);
         }
 
         private static Size MeasureSize(RenderContext ctx, string text, RenderFont font)
@@ -1518,51 +1489,51 @@ namespace ATAS.Indicators.Technical
             }
             catch { }
             // Fallback aproximado de alto/alto
-            var width = (int)Math.Round(((text?.Length ?? 0) + 1) * font.Size * (font.Style.HasFlag(FontStyle.Bold) ? 0.66 : 0.58));
-            var height = (int)Math.Round(font.Size * 1.6f); // aprox con asc/desc
+            var width = (int)Math.Round(((text?.Length ??0) +1) * font.Size * (font.Style.HasFlag(FontStyle.Bold) ?0.66 :0.58));
+            var height = (int)Math.Round(font.Size *1.6f); // aprox con asc/desc
             return new Size(width, height);
         }
 
         private void DrawSpeedometer(RenderContext ctx, Rectangle rect, decimal? value, decimal min, decimal max, Metric metric)
         {
             // Geometría del gauge (semicírculo superior) con anillos como el primero
-            int padding = Math.Max(8, _rowPaddingY + 6);
-            int extraMargin = 8;
+            int padding = Math.Max(8, _rowPaddingY +6);
+            int extraMargin =8;
 
-            int ringThickness = Math.Max(8, rect.Height / 7);
-            int innerGap = Math.Max(3, ringThickness / 3);
+            int ringThickness = Math.Max(8, rect.Height /7);
+            int innerGap = Math.Max(3, ringThickness /3);
 
-            int cx = rect.X + rect.Width / 2;
-            int cy = rect.Y + rect.Height - padding - extraMargin + 6;
+            int cx = rect.X + rect.Width /2;
+            int cy = rect.Y + rect.Height - padding - extraMargin +6;
 
-            int maxRadiusX = Math.Max(0, rect.Width / 2 - padding - extraMargin - ringThickness / 2);
-            int maxRadiusY = Math.Max(0, cy - (rect.Y + padding + extraMargin) - ringThickness / 2);
+            int maxRadiusX = Math.Max(0, rect.Width /2 - padding - extraMargin - ringThickness /2);
+            int maxRadiusY = Math.Max(0, cy - (rect.Y + padding + extraMargin) - ringThickness /2);
             int radius = Math.Max(10, Math.Min(maxRadiusX, maxRadiusY));
 
             // Anillo externo e interno (profundidad)
-            DrawArc(ctx, cx, cy, radius, -180, 0, _gaugeBaseColor, ringThickness, 72);
-            DrawArc(ctx, cx, cy, radius - ringThickness - innerGap, -180, 0, _gaugeInnerBaseColor, Math.Max(1, ringThickness - 2), 72);
+            DrawArc(ctx, cx, cy, radius, -180,0, _gaugeBaseColor, ringThickness,72);
+            DrawArc(ctx, cx, cy, radius - ringThickness - innerGap, -180,0, _gaugeInnerBaseColor, Math.Max(1, ringThickness -2),72);
 
             // Bandas de zonas (debajo del progreso) para que no tape el indicador
             if (_gaugeShowBands)
             {
                 float aStart = -180f;
-                float aEnd = 0f;
+                float aEnd =0f;
                 float aLowEnd = aStart + (float)_gaugeBandLow * (aEnd - aStart);
                 float aHighStart = aStart + (float)_gaugeBandHigh * (aEnd - aStart);
-                int bandThickness = Math.Max(2, ringThickness - 6);
+                int bandThickness = Math.Max(2, ringThickness -6);
                 var lowCol = Color.FromArgb(100, _gaugeBandLowColor);
                 var midCol = Color.FromArgb(100, _gaugeBandMidColor);
                 var highCol = Color.FromArgb(100, _gaugeBandHighColor);
 
-                DrawArc(ctx, cx, cy, radius, aStart, aLowEnd, lowCol, bandThickness, 32);
-                DrawArc(ctx, cx, cy, radius, aLowEnd, aHighStart, midCol, bandThickness, 32);
-                DrawArc(ctx, cx, cy, radius, aHighStart, aEnd, highCol, bandThickness, 32);
+                DrawArc(ctx, cx, cy, radius, aStart, aLowEnd, lowCol, bandThickness,32);
+                DrawArc(ctx, cx, cy, radius, aLowEnd, aHighStart, midCol, bandThickness,32);
+                DrawArc(ctx, cx, cy, radius, aHighStart, aEnd, highCol, bandThickness,32);
             }
 
             // Valor a mostrar con suavizado opcional
-            decimal val = value ?? 0m;
-            if (_gaugeSmoothing > 0m)
+            decimal val = value ??0m;
+            if (_gaugeSmoothing >0m)
             {
                 var key = metric.Title ?? "__gauge__";
                 if (!_smoothValues.TryGetValue(key, out var last)) last = val;
@@ -1571,64 +1542,64 @@ namespace ATAS.Indicators.Technical
                 val = smoothed;
             }
 
-            if (max <= min) max = min + 1;
+            if (max <= min) max = min +1;
             var clamped = Math.Max(min, Math.Min(max, val));
 
             // Progreso solo en el lado correspondiente: verde (derecha, >0), rojo (izquierda, <0)
             float zeroAngle = -90f;
-            int segs = 90;
-            if (clamped > 0m)
+            int segs =90;
+            if (clamped >0m)
             {
-                float tPos = (float)(clamped / Math.Max(1e-8m, (max - 0m))); // 0..1 relativo al lado derecho
+                float tPos = (float)(clamped / Math.Max(1e-8m, (max -0m))); //0..1 relativo al lado derecho
                 tPos = Math.Max(0f, Math.Min(1f, tPos));
-                float endRight = zeroAngle + tPos * 90f; // -90 .. 0
+                float endRight = zeroAngle + tPos *90f; // -90 ..0
                 DrawArc(ctx, cx, cy, radius, zeroAngle, endRight, _gaugeProgressPositive, ringThickness, segs);
             }
-            else if (clamped < 0m)
+            else if (clamped <0m)
             {
-                float tNeg = (float)((0m - clamped) / Math.Max(1e-8m, (0m - min))); // 0..1 relativo al lado izquierdo
+                float tNeg = (float)((0m - clamped) / Math.Max(1e-8m, (0m - min))); //0..1 relativo al lado izquierdo
                 tNeg = Math.Max(0f, Math.Min(1f, tNeg));
-                float startLeft = zeroAngle - tNeg * 90f; // -180 .. -90
+                float startLeft = zeroAngle - tNeg *90f; // -180 .. -90
                 DrawArc(ctx, cx, cy, radius, startLeft, zeroAngle, _gaugeProgressNegative, ringThickness, segs);
             }
 
-            // Marca del 0 (arriba)
-            DrawArc(ctx, cx, cy, radius, -92, -88, _gaugeZeroTickColor, Math.Max(2, ringThickness - 2), 4);
+            // Marca del0 (arriba)
+            DrawArc(ctx, cx, cy, radius, -92, -88, _gaugeZeroTickColor, Math.Max(2, ringThickness -2),4);
 
             // Etiquetas mín/0/máx
             string tMin = ((double)min).ToString("0.#", CultureInfo.InvariantCulture);
             string tZero = "0";
             string tMax = ((double)max).ToString("0.#", CultureInfo.InvariantCulture);
-            int offText = ringThickness + 8;
-            DrawLabelOnArc(ctx, tMin, _fontNorm, Color.Gainsboro, cx, cy, radius + 2, -180, -offText);
-            DrawLabelOnArc(ctx, tZero, _fontNorm, Color.Gainsboro, cx, cy, radius + 2, -90, -offText);
-            DrawLabelOnArc(ctx, tMax, _fontNorm, Color.Gainsboro, cx, cy, radius + 2, 0, -offText);
+            int offText = ringThickness +8;
+            DrawLabelOnArc(ctx, tMin, _fontNorm, Color.Gainsboro, cx, cy, radius +2, -180, -offText);
+            DrawLabelOnArc(ctx, tZero, _fontNorm, Color.Gainsboro, cx, cy, radius +2, -90, -offText);
+            DrawLabelOnArc(ctx, tMax, _fontNorm, Color.Gainsboro, cx, cy, radius +2,0, -offText);
 
             // Título
             int titleW = MeasureText(ctx, metric.Title, _fontNorm);
-            ctx.DrawString(metric.Title, _fontNorm, _titleColor, cx - titleW / 2, rect.Y + _rowPaddingY);
+            ctx.DrawString(metric.Title, _fontNorm, _titleColor, cx - titleW /2, rect.Y + _rowPaddingY);
 
             // Valor grande
-            var bigFont = new RenderFont("Segoe UI", Math.Min(_baseFontSize + 6, _baseFontSize * 2), FontStyle.Bold);
+            var bigFont = new RenderFont("Segoe UI", Math.Min(_baseFontSize +6, _baseFontSize *2), FontStyle.Bold);
             string textVal;
             try
             {
                 var fmt = string.IsNullOrWhiteSpace(metric.Format) ? "+0.##;-0.##" : metric.Format;
-                textVal = (value ?? 0m).ToString(fmt, CultureInfo.InvariantCulture) + (string.IsNullOrEmpty(metric.Unit) ? string.Empty : metric.Unit);
+                textVal = (value ??0m).ToString(fmt, CultureInfo.InvariantCulture) + (string.IsNullOrEmpty(metric.Unit) ? string.Empty : metric.Unit);
             }
-            catch { textVal = (value ?? 0m).ToString("+0.##;-0.##", CultureInfo.InvariantCulture) + (string.IsNullOrEmpty(metric.Unit) ? string.Empty : metric.Unit); }
+            catch { textVal = (value ??0m).ToString("+0.##;-0.##", CultureInfo.InvariantCulture) + (string.IsNullOrEmpty(metric.Unit) ? string.Empty : metric.Unit); }
             int valW = MeasureText(ctx, textVal, bigFont);
             int valH = MeasureSize(ctx, textVal, bigFont).Height;
-            var bigCol = (value ?? 0m) >= 0m ? _gaugeProgressPositive : _gaugeProgressNegative;
-            ctx.DrawString(textVal, bigFont, bigCol, cx - valW / 2, cy - valH - ringThickness - 4);
+            var bigCol = (value ??0m) >=0m ? _gaugeProgressPositive : _gaugeProgressNegative;
+            ctx.DrawString(textVal, bigFont, bigCol, cx - valW /2, cy - valH - ringThickness -4);
 
             // Flecha dirección opcional
             if (_gaugeShowArrow)
             {
-                string arrow = (val >= 0m) ? "▲" : "▼";
-                var arrColor = (val >= 0m) ? _gaugeProgressPositive : _gaugeProgressNegative;
+                string arrow = (val >=0m) ? "▲" : "▼";
+                var arrColor = (val >=0m) ? _gaugeProgressPositive : _gaugeProgressNegative;
                 int arrW = MeasureText(ctx, arrow, _fontNorm);
-                ctx.DrawString(arrow, _fontNorm, arrColor, cx - arrW / 2, cy - ringThickness - 4);
+                ctx.DrawString(arrow, _fontNorm, arrColor, cx - arrW /2, cy - ringThickness -4);
             }
 
             // Detalles opcionales (valor abs y %)
@@ -1637,35 +1608,35 @@ namespace ATAS.Indicators.Technical
                 string details;
                 try
                 {
-                    var pctText = clamped == 0 ? "0%" : ((clamped - 0) / Math.Max(1e-8m, (max - min)) * 100m).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+                    var pctText = clamped ==0 ? "0%" : ((clamped -0) / Math.Max(1e-8m, (max - min)) *100m).ToString("0.##", CultureInfo.InvariantCulture) + "%";
                     details = pctText;
                 }
                 catch { details = string.Empty; }
                 if (!string.IsNullOrEmpty(details))
                 {
                     int dw = MeasureText(ctx, details, _fontNorm);
-                    ctx.DrawString(details, _fontNorm, Color.Gainsboro, cx - dw / 2, cy - ringThickness - 4 - (_gaugeShowArrow ? MeasureSize(ctx, "A", _fontNorm).Height + 2 : 0));
+                    ctx.DrawString(details, _fontNorm, Color.Gainsboro, cx - dw /2, cy - ringThickness -4 - (_gaugeShowArrow ? MeasureSize(ctx, "A", _fontNorm).Height +2 :0));
                 }
             }
         }
 
         private static void DrawTick(RenderContext ctx, int cx, int cy, int r, float angleDeg, Color color)
         {
-            double ang = angleDeg * Math.PI / 180.0;
-            int r1 = r - 2;
-            int r2 = r - 10;
+            double ang = angleDeg * Math.PI /180.0;
+            int r1 = r -2;
+            int r2 = r -10;
             int x1 = cx + (int)(Math.Cos(ang) * r1);
             int y1 = cy + (int)(Math.Sin(ang) * r1);
             int x2 = cx + (int)(Math.Cos(ang) * r2);
             int y2 = cy + (int)(Math.Sin(ang) * r2);
-            ctx.DrawLine(new RenderPen(color, 1), x1, y1, x2, y2);
+            ctx.DrawLine(new RenderPen(color,1), x1, y1, x2, y2);
         }
 
         private void DrawLabelOnArc(RenderContext ctx, string text, RenderFont font, Color color, int cx, int cy, int r, float angleDeg, int dy)
         {
             int w = MeasureText(ctx, text, font);
-            double ang = angleDeg * Math.PI / 180.0;
-            int x = cx + (int)(Math.Cos(ang) * r) - w / 2;
+            double ang = angleDeg * Math.PI /180.0;
+            int x = cx + (int)(Math.Cos(ang) * r) - w /2;
             int y = cy + (int)(Math.Sin(ang) * r) + dy;
             ctx.DrawString(text, font, color, x, y);
         }
@@ -1674,13 +1645,13 @@ namespace ATAS.Indicators.Technical
         {
             // Normaliza
             if (endDeg < startDeg) { var tmp = startDeg; startDeg = endDeg; endDeg = tmp; }
-            double start = startDeg * Math.PI / 180.0;
-            double end = endDeg * Math.PI / 180.0;
+            double start = startDeg * Math.PI /180.0;
+            double end = endDeg * Math.PI /180.0;
             double step = Math.Max(0.001, (end - start) / segments);
             int px = cx + (int)(Math.Cos(start) * radius);
             int py = cy + (int)(Math.Sin(start) * radius);
             var pen = new RenderPen(color, thickness);
-            for (double a = start + step; a <= end + 1e-6; a += step)
+            for (double a = start + step; a <= end +1e-6; a += step)
             {
                 int x = cx + (int)(Math.Cos(a) * radius);
                 int y = cy + (int)(Math.Sin(a) * radius);
@@ -1708,53 +1679,53 @@ namespace ATAS.Indicators.Technical
                 var lines = File.ReadAllLines(_csvPath)
                     .Where(l => !string.IsNullOrWhiteSpace(l))
                     .ToArray();
-                if (lines.Length == 0) return null;
+                if (lines.Length ==0) return null;
 
                 var first = SplitCsvLine(lines[0]);
-                // Caso 1: header + filas (busca columna y recorre desde el final)
-                if (first.Length >= 3 || (first.Length >= 2 && lines.Length > 1))
+                // Caso1: header + filas (busca columna y recorre desde el final)
+                if (first.Length >=3 || (first.Length >=2 && lines.Length >1))
                 {
                     var header = first;
                     // Encuentra índice de cualquiera de los claves
                     int idx = -1;
-                    for (int i = 0; i < header.Length; i++)
+                    for (int i =0; i < header.Length; i++)
                     {
                         foreach (var k in metric.Keys)
                         {
                             if (string.Equals(header[i], k, StringComparison.OrdinalIgnoreCase))
                             { idx = i; break; }
                         }
-                        if (idx >= 0) break;
+                        if (idx >=0) break;
                     }
-                    if (idx >= 0)
+                    if (idx >=0)
                     {
-                        for (int r = lines.Length - 1; r >= 1; r--)
+                        for (int r = lines.Length -1; r >=1; r--)
                         {
                             var row = SplitCsvLine(lines[r]);
                             if (idx < row.Length)
                             {
                                 var candidate = row[idx];
-                                if (TryParseNumber(candidate, out var n, out _, out _, out _) && n > 0m)
+                                if (TryParseNumber(candidate, out var n, out _, out _, out _) && n >0m)
                                     return candidate?.Trim();
                             }
                         }
                     }
                 }
 
-                // Caso 2: pares clave-valor por línea
-                if (first.Length == 2)
+                // Caso2: pares clave-valor por línea
+                if (first.Length ==2)
                 {
-                    for (int r = lines.Length - 1; r >= 0; r--)
+                    for (int r = lines.Length -1; r >=0; r--)
                     {
                         var parts = SplitCsvLine(lines[r]);
-                        if (parts.Length < 2) continue;
+                        if (parts.Length <2) continue;
                         var key = parts[0];
                         var val = parts[1];
                         foreach (var k in metric.Keys)
                         {
                             if (string.Equals(key, k, StringComparison.OrdinalIgnoreCase))
                             {
-                                if (TryParseNumber(val, out var n, out _, out _, out _) && n > 0m)
+                                if (TryParseNumber(val, out var n, out _, out _, out _) && n >0m)
                                     return val?.Trim();
                             }
                         }
@@ -1784,71 +1755,71 @@ namespace ATAS.Indicators.Technical
                 return (null, null);
 
             var diff = curr.Value - prev.Value;
-            // minutos transcurridos entre muestras; si no hay timestamp válido, asumimos 1 min
-            double minutes = 1d;
+            // minutos transcurridos entre muestras; si no hay timestamp válido, asumimos1 min
+            double minutes =1d;
             if (tsCurr.HasValue && tsPrev.HasValue)
             {
                 var dt = (tsCurr.Value - tsPrev.Value).TotalMinutes;
-                if (dt > 1e-6) minutes = dt;
+                if (dt >1e-6) minutes = dt;
             }
 
             var absPerMin = Math.Abs(diff) / (decimal)minutes;
-            var denom = Math.Max(Math.Abs(prev.Value), 1e-8m);
-            var pctPerMin = ((diff / denom) * 100m) / (decimal)minutes;
+            var denom = Math.Max(Math.Abs(prev.Value),1e-8m);
+            var pctPerMin = ((diff / denom) *100m) / (decimal)minutes;
             pctPerMin = Math.Max(-100m, Math.Min(100m, pctPerMin));
             return (absPerMin, pctPerMin);
         }
 
         private (decimal? abs, decimal? pct) CalculateVannaRates(Dictionary<string, string> map)
         {
-            // Definición correcta: ((ΔCashCall/prevCashCall) - (ΔCashPut/prevCashPut)) / 2 * 100
+            // Definición correcta: ((ΔCashCall/prevCashCall) - (ΔCashPut/prevCashPut)) /2 *100
             decimal? cashCallPrev, cashCallCurr, cashPutPrev, cashPutCurr;
             lock (_sync)
             {
                 cashCallPrev = _cashCallPrev; cashCallCurr = _cashCallCurr;
-                cashPutPrev = _cashPutPrev;   cashPutCurr = _cashPutCurr;
+                cashPutPrev = _cashPutPrev; cashPutCurr = _cashPutCurr;
             }
 
-            decimal? callPct = null, putPct = null; // en porcentaje ya multiplicado por 100
-            if (cashCallPrev.HasValue && cashCallPrev.Value != 0m && cashCallCurr.HasValue)
-                callPct = ((cashCallCurr.Value - cashCallPrev.Value) / cashCallPrev.Value) * 100m;
-            if (cashPutPrev.HasValue && cashPutPrev.Value != 0m && cashPutCurr.HasValue)
-                putPct = ((cashPutCurr.Value - cashPutPrev.Value) / cashPutPrev.Value) * 100m;
+            decimal? callPct = null, putPct = null; // en porcentaje ya multiplicado por100
+            if (cashCallPrev.HasValue && cashCallPrev.Value !=0m && cashCallCurr.HasValue)
+                callPct = ((cashCallCurr.Value - cashCallPrev.Value) / cashCallPrev.Value) *100m;
+            if (cashPutPrev.HasValue && cashPutPrev.Value !=0m && cashPutCurr.HasValue)
+                putPct = ((cashPutCurr.Value - cashPutPrev.Value) / cashPutPrev.Value) *100m;
 
             decimal? resultPct = null;
             if (callPct.HasValue && putPct.HasValue)
-                resultPct = (callPct.Value - putPct.Value) / 2m;
+                resultPct = (callPct.Value - putPct.Value) /2m;
             else if (callPct.HasValue)
-                resultPct = callPct.Value / 2m;       // asumiendo put≈0
+                resultPct = callPct.Value /2m; // asumiendo put≈0
             else if (putPct.HasValue)
-                resultPct = (-putPct.Value) / 2m;     // asumiendo call≈0
+                resultPct = (-putPct.Value) /2m; // asumiendo call≈0
 
             return (null, resultPct);
         }
 
         private (decimal? abs, decimal? pct) CalculateIvSkewRates(Dictionary<string, string> map)
         {
-            // Definición: Velocidad Skew = ((ΔIVCall/prevIVCall) - (ΔIVPut/prevIVPut)) / 2 * 100
+            // Definición: Velocidad Skew = ((ΔIVCall/prevIVCall) - (ΔIVPut/prevIVPut)) /2 *100
             decimal? ivCallPrev, ivCallCurr, ivPutPrev, ivPutCurr;
             lock (_sync)
             {
                 ivCallPrev = _ivCallPrev; ivCallCurr = _ivCallCurr;
-                ivPutPrev  = _ivPutPrev;  ivPutCurr  = _ivPutCurr;
+                ivPutPrev = _ivPutPrev; ivPutCurr = _ivPutCurr;
             }
 
             decimal? callPct = null, putPct = null;
-            if (ivCallPrev.HasValue && ivCallPrev.Value != 0m && ivCallCurr.HasValue)
-                callPct = ((ivCallCurr.Value - ivCallPrev.Value) / ivCallPrev.Value) * 100m;
-            if (ivPutPrev.HasValue && ivPutPrev.Value != 0m && ivPutCurr.HasValue)
-                putPct = ((ivPutCurr.Value - ivPutPrev.Value) / ivPutPrev.Value) * 100m;
+            if (ivCallPrev.HasValue && ivCallPrev.Value !=0m && ivCallCurr.HasValue)
+                callPct = ((ivCallCurr.Value - ivCallPrev.Value) / ivCallPrev.Value) *100m;
+            if (ivPutPrev.HasValue && ivPutPrev.Value !=0m && ivPutCurr.HasValue)
+                putPct = ((ivPutCurr.Value - ivPutPrev.Value) / ivPutPrev.Value) *100m;
 
             decimal? resultPct = null;
             if (callPct.HasValue && putPct.HasValue)
-                resultPct = (callPct.Value - putPct.Value) / 2m;
+                resultPct = (callPct.Value - putPct.Value) /2m;
             else if (callPct.HasValue)
-                resultPct = callPct.Value / 2m;   // asume put≈0
+                resultPct = callPct.Value /2m; // asume put≈0
             else if (putPct.HasValue)
-                resultPct = (-putPct.Value) / 2m; // asume call≈0
+                resultPct = (-putPct.Value) /2m; // asume call≈0
 
             return (null, resultPct);
         }
