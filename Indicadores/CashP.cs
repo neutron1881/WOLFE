@@ -572,6 +572,41 @@ namespace ATAS.Indicators.Technical
             set { _prevMarkerPutsColor = value; RedrawChart(); }
         }
 
+        // Previous NET markers (Calls - Puts)
+        private bool _showPrevNetMarkers = false;
+        private int _prevNetMarkerSize =6;
+        private Color _prevNetPositiveColor = Color.LightGreen;
+        private Color _prevNetNegativeColor = Color.LightCoral;
+
+        [Display(GroupName = "9. Previous markers", Name = "Show previous NET markers", Order =105)]
+        public bool ShowPreviousNetMarkers
+        {
+            get => _showPrevNetMarkers;
+            set { _showPrevNetMarkers = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "9. Previous markers", Name = "NET marker size (px)", Order =106)]
+        [Range(2,20)]
+        public int PreviousNetMarkerSize
+        {
+            get => _prevNetMarkerSize;
+            set { _prevNetMarkerSize = Math.Clamp(value,2,20); RedrawChart(); }
+        }
+
+        [Display(GroupName = "9. Previous markers", Name = "NET positive color", Order =107)]
+        public Color PreviousNetPositiveColor
+        {
+            get => _prevNetPositiveColor;
+            set { _prevNetPositiveColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "9. Previous markers", Name = "NET negative color", Order =108)]
+        public Color PreviousNetNegativeColor
+        {
+            get => _prevNetNegativeColor;
+            set { _prevNetNegativeColor = value; RedrawChart(); }
+        }
+
         public CashProfile()
         {
             EnableCustomDrawing = true;
@@ -683,7 +718,7 @@ namespace ATAS.Indicators.Technical
                     context.FillRectangle(Color.FromArgb(_fillOpacity, rightColor), rectR);
                 }
 
-                // Previous markers (tip position of previous snapshot)
+                // Previous markers (tip position of previous snapshot for Calls/Puts)
                 if (_showPrevMarkers)
                 {
                     // Try match by SPY strike first (stable), then by positioned strike
@@ -757,6 +792,35 @@ namespace ATAS.Indicators.Technical
                                     context.FillRectangle(Color.FromArgb(_netOpacity, _netPutsColor), r);
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Previous NET marker (tip position of previous net bar)
+                if (_showPrevNetMarkers)
+                {
+                    (decimal prevCalls, decimal prevPuts) prev;
+                    if (!prevBySpy.TryGetValue(row.StrikeSpy, out prev))
+                        prevByStrike.TryGetValue(row.Strike, out prev);
+
+                    var prevDiff = prev.prevCalls - prev.prevPuts;
+                    if (prevDiff !=0)
+                    {
+                        int prevW = (int)Math.Round((double)Math.Abs(prevDiff) * scale);
+                        if (prevW >=0)
+                        {
+                            int size = _prevNetMarkerSize;
+                            int sgn =0;
+                            if (prevDiff >0)
+                                sgn = _callsOnRight ? +1 : -1;
+                            else if (prevDiff <0)
+                                sgn = _callsOnRight ? -1 : +1;
+
+                            int mx = xCenter + sgn * prevW;
+                            int my = y;
+                            var color = prevDiff >0 ? _prevNetPositiveColor : _prevNetNegativeColor;
+                            var mRect = new Rectangle(mx - size /2, my - size /2, size, size);
+                            context.FillRectangle(color, mRect);
                         }
                     }
                 }
