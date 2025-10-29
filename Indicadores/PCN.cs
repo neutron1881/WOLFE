@@ -127,6 +127,15 @@ namespace ATAS.Indicators.Technical
                 new SeriesDef { Key = "Cash Neto",  Display = "Cash Neto",  Color = Color.DarkCyan },
                 new SeriesDef { Key = "IV Neta",    Display = "IV Neta",    Color = Color.MediumVioletRed },
                 new SeriesDef { Key = "Delta Neto", Display = "Delta Neto", Color = Color.RoyalBlue },
+
+                // Nuevas columnas de Size
+                new SeriesDef { Key = "CallAsk",    Display = "Call Ask",    Color = Color.ForestGreen },
+                new SeriesDef { Key = "CallBid",    Display = "Call Bid",    Color = Color.DarkGreen },
+                new SeriesDef { Key = "PutAsk",     Display = "Put Ask",     Color = Color.OrangeRed },
+                new SeriesDef { Key = "PutBid",     Display = "Put Bid",     Color = Color.Firebrick },
+                new SeriesDef { Key = "TotalCall",  Display = "Total Call",  Color = Color.DarkBlue },
+                new SeriesDef { Key = "TotalPut",   Display = "Total Put",   Color = Color.DarkRed },
+                new SeriesDef { Key = "SNeto",      Display = "SNeto",      Color = Color.Black },
             });
 
             // Crear y registrar ValueDataSeries para cada definición
@@ -440,6 +449,23 @@ namespace ATAS.Indicators.Technical
         public bool Show_NetDelta { get => _showNetDelta; set { _showNetDelta = value; SetSeriesVisibility("Net Delta", value); } }
         [Category("Series: Net"), Display(Name = "Net Gex", Order = 1)]
         public bool Show_NetGex { get => _showNetGex; set { _showNetGex = value; SetSeriesVisibility("Net Gex", value); } }
+
+        // Size: CallAsk, CallBid, PutAsk, PutBid, TotalCall, TotalPut, SNeto
+        private bool _showCallAsk = true, _showCallBid = true, _showPutAsk = true, _showPutBid = true, _showTotalCall = true, _showTotalPut = true, _showSNeto = true;
+        [Category("Series: Size"), Display(Name = "Call Ask", Order = 0)]
+        public bool Show_CallAsk { get => _showCallAsk; set { _showCallAsk = value; SetSeriesVisibility("CallAsk", value); } }
+        [Category("Series: Size"), Display(Name = "Call Bid", Order = 1)]
+        public bool Show_CallBid { get => _showCallBid; set { _showCallBid = value; SetSeriesVisibility("CallBid", value); } }
+        [Category("Series: Size"), Display(Name = "Put Ask", Order = 2)]
+        public bool Show_PutAsk { get => _showPutAsk; set { _showPutAsk = value; SetSeriesVisibility("PutAsk", value); } }
+        [Category("Series: Size"), Display(Name = "Put Bid", Order = 3)]
+        public bool Show_PutBid { get => _showPutBid; set { _showPutBid = value; SetSeriesVisibility("PutBid", value); } }
+        [Category("Series: Size"), Display(Name = "Total Call", Order = 4)]
+        public bool Show_TotalCall { get => _showTotalCall; set { _showTotalCall = value; SetSeriesVisibility("TotalCall", value); } }
+        [Category("Series: Size"), Display(Name = "Total Put", Order = 5)]
+        public bool Show_TotalPut { get => _showTotalPut; set { _showTotalPut = value; SetSeriesVisibility("TotalPut", value); } }
+        [Category("Series: Size"), Display(Name = "SNeto", Order = 6)]
+        public bool Show_SNeto { get => _showSNeto; set { _showSNeto = value; SetSeriesVisibility("SNeto", value); } }
 
         // Helpers de parseo/encuentro/colores
         private static bool TryParseDecimal(string? s, out decimal value)
