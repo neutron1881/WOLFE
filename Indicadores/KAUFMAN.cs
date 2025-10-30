@@ -16,12 +16,33 @@ public class DEI_DeltaImpact_ATAS : Indicator
  // Columnas disponibles
  public enum SeriesColumn
  {
- CallsUsd,
- PutsUsd,
- IvCalls,
- IvPuts,
- DCall,
- DPuts
+ Timestamp,
+ Price,
+ CallVol,
+ PutVol,
+ NetDelta,
+ NetGex,
+ TotalIO,
+ NetIO,
+ CallOI,
+ PutOI,
+ NetVol,
+ CashCall,
+ CashPut,
+ IvCall,
+ IvPut,
+ CallDelta,
+ DeltaPut,
+ CashNeto,
+ IvNeta,
+ DeltaNeto,
+ CallAsk,
+ CallBid,
+ PutAsk,
+ PutBid,
+ TotalCall,
+ TotalPut,
+ SNeto
  }
 
  private readonly ValueDataSeries _kerASeries = new("KER A") { Color = CrossColor.FromArgb(255,255,165,0), Width =2 };
@@ -33,8 +54,8 @@ public class DEI_DeltaImpact_ATAS : Indicator
  // Backing fields (para refresco inmediato)
  private string _filePath = @"C:\\data\\SPY_Cash.csv";
  private double _gmtOffsetHours =0d;
- private SeriesColumn _seriesA = SeriesColumn.CallsUsd;
- private SeriesColumn _seriesB = SeriesColumn.PutsUsd;
+ private SeriesColumn _seriesA = SeriesColumn.CallVol;
+ private SeriesColumn _seriesB = SeriesColumn.PutVol;
  private bool _showSeriesA = true;
  private bool _showSeriesB = true;
  private int _period =14;
@@ -182,26 +203,10 @@ public class DEI_DeltaImpact_ATAS : Indicator
 
  // Time series agregadas por timestamp
  private readonly List<DateTime> _times = new();
- private readonly Dictionary<SeriesColumn, List<decimal>> _series = new()
- {
- [SeriesColumn.CallsUsd] = new(),
- [SeriesColumn.PutsUsd] = new(),
- [SeriesColumn.IvCalls] = new(),
- [SeriesColumn.IvPuts] = new(),
- [SeriesColumn.DCall] = new(),
- [SeriesColumn.DPuts] = new()
- };
+ private readonly Dictionary<SeriesColumn, List<decimal>> _series;
 
  // KER pre-calculados por columna
- private readonly Dictionary<SeriesColumn, List<decimal>> _ker = new()
- {
- [SeriesColumn.CallsUsd] = new(),
- [SeriesColumn.PutsUsd] = new(),
- [SeriesColumn.IvCalls] = new(),
- [SeriesColumn.IvPuts] = new(),
- [SeriesColumn.DCall] = new(),
- [SeriesColumn.DPuts] = new()
- };
+ private readonly Dictionary<SeriesColumn, List<decimal>> _ker;
 
  public DEI_DeltaImpact_ATAS()
  : base(true)
@@ -212,6 +217,15 @@ public class DEI_DeltaImpact_ATAS : Indicator
  DataSeries.Add(_kerBSeries);
  DataSeries.Add(_level1Series);
  DataSeries.Add(_level2Series);
+
+ // Inicializar diccionarios para todas las columnas
+ _series = new Dictionary<SeriesColumn, List<decimal>>();
+ _ker = new Dictionary<SeriesColumn, List<decimal>>();
+ foreach (SeriesColumn c in Enum.GetValues(typeof(SeriesColumn)))
+ {
+ _series[c] = new List<decimal>();
+ _ker[c] = new List<decimal>();
+ }
  }
 
  protected override void OnInitialize()
@@ -348,6 +362,7 @@ public class DEI_DeltaImpact_ATAS : Indicator
  // Acumulación por timestamp
  var agg = new Dictionary<DateTime, decimal[]>();
  var ci = CultureInfo.InvariantCulture;
+ int colsCount = Enum.GetValues(typeof(SeriesColumn)).Length;
 
  for (int i = start; i < lines.Count; i++)
  {
@@ -355,20 +370,24 @@ public class DEI_DeltaImpact_ATAS : Indicator
  if (parts.Length ==0)
  continue;
 
- if (!TryParseTimestamp(parts, map.Timestamp, out var ts))
+ if (!TryParseTimestamp(parts, map.TryGetValue(SeriesColumn.Timestamp, out var idxTs) ? idxTs : -1, out var ts))
+ {
+ // try common timestamp locations
+ if (!TryParseTimestamp(parts, map.TryGetValue(SeriesColumn.SNeto, out idxTs) ? idxTs : -1, out ts))
  continue;
+ }
 
  // Aplicar ajuste GMT en horas
  ts = ts.AddHours(GmtOffsetHours);
 
- var sums = agg.TryGetValue(ts, out var arr) ? arr : new decimal[6];
+ var sums = agg.TryGetValue(ts, out var arr) ? arr : new decimal[colsCount];
 
- TryAdd(parts, map.CallsUsd, ref sums[0], ci);
- TryAdd(parts, map.PutsUsd, ref sums[1], ci);
- TryAdd(parts, map.IvCalls, ref sums[2], ci);
- TryAdd(parts, map.IvPuts, ref sums[3], ci);
- TryAdd(parts, map.DCall, ref sums[4], ci);
- TryAdd(parts, map.DPuts, ref sums[5], ci);
+ // Añadir cada columna según mapa
+ foreach (SeriesColumn sc in Enum.GetValues(typeof(SeriesColumn)))
+ {
+ if (map.TryGetValue(sc, out var cidx))
+ TryAdd(parts, cidx, ref sums[(int)sc], ci);
+ }
 
  agg[ts] = sums;
  }
@@ -378,12 +397,8 @@ public class DEI_DeltaImpact_ATAS : Indicator
  {
  _times.Add(kv.Key);
  var v = kv.Value;
- _series[SeriesColumn.CallsUsd].Add(v[0]);
- _series[SeriesColumn.PutsUsd].Add(v[1]);
- _series[SeriesColumn.IvCalls].Add(v[2]);
- _series[SeriesColumn.IvPuts].Add(v[3]);
- _series[SeriesColumn.DCall].Add(v[4]);
- _series[SeriesColumn.DPuts].Add(v[5]);
+ foreach (SeriesColumn sc in Enum.GetValues(typeof(SeriesColumn)))
+ _series[sc].Add(v[(int)sc]);
  }
 
  // Limitar historial
@@ -464,44 +479,45 @@ public class DEI_DeltaImpact_ATAS : Indicator
 
  // ---- Mapeo de columnas ----
 
- private sealed class ColumnMap
+ private static Dictionary<SeriesColumn,int> MapColumns(string[] header)
  {
- public int Timestamp = -1;
- public int CallsUsd = -1;
- public int PutsUsd = -1;
- public int IvCalls = -1;
- public int IvPuts = -1;
- public int DCall = -1;
- public int DPuts = -1;
- }
-
- private static ColumnMap MapColumns(string[] header)
- {
- var map = new ColumnMap();
- if (header == null || header.Length ==0)
- return map;
+ var map = new Dictionary<SeriesColumn,int>();
+ if (header == null || header.Length ==0) return map;
 
  for (int i =0; i < header.Length; i++)
  {
  var norm = Normalize(header[i]);
+ if (string.IsNullOrWhiteSpace(norm)) continue;
 
- if (norm == "timestamp" || norm == "time" || norm == "datetime")
- map.Timestamp = i;
+ // Timestamp
+ if (norm == "timestamp" || norm == "time" || norm == "datetime" || norm.Contains("timestamp") || norm.Contains("timestampqqq") || norm.Contains("timestamp(")) { map[SeriesColumn.Timestamp] = i; continue; }
 
- else if (norm == "ivcalls" || norm == "callsiv" || norm == "ivcall")
- map.IvCalls = i;
- else if (norm == "ivputs" || norm == "putsiv" || norm == "ivput")
- map.IvPuts = i;
-
- else if (norm == "dcall" || norm == "dcalls" || norm == "delta_call" || norm == "call_delta")
- map.DCall = i;
- else if (norm == "dputs" || norm == "dput" || norm == "delta_put" || norm == "put_delta")
- map.DPuts = i;
-
- else if (norm.Contains("call"))
- map.CallsUsd = i;
- else if (norm.Contains("put"))
- map.PutsUsd = i;
+ if (norm.Contains("price") || norm == "precio") map[SeriesColumn.Price] = i;
+ if (norm.Contains("callvol") || norm.Contains("call_vol") || norm.Contains("call vol")) map[SeriesColumn.CallVol] = i;
+ if (norm.Contains("putvol") || norm.Contains("put_vol") || norm.Contains("put vol")) map[SeriesColumn.PutVol] = i;
+ if (norm.Contains("netdelta") || norm.Contains("net_delta") || norm.Contains("net delta")) map[SeriesColumn.NetDelta] = i;
+ if (norm.Contains("netgex") || norm.Contains("gex")) map[SeriesColumn.NetGex] = i;
+ if (norm.Contains("totalio") || norm.Contains("total_io") || norm.Contains("total io")) map[SeriesColumn.TotalIO] = i;
+ if (norm.Contains("netio") || norm.Contains("net_io") || norm.Contains("net io")) map[SeriesColumn.NetIO] = i;
+ if (norm.Contains("calloi") || norm.Contains("call_oi") || norm.Contains("call oi")) map[SeriesColumn.CallOI] = i;
+ if (norm.Contains("putoi") || norm.Contains("put_oi") || norm.Contains("put oi")) map[SeriesColumn.PutOI] = i;
+ if (norm.Contains("netvol") || norm.Contains("net_vol") || norm.Contains("net vol")) map[SeriesColumn.NetVol] = i;
+ if (norm.Contains("cashcall") || norm.Contains("cash_call") || norm.Contains("cash call")) map[SeriesColumn.CashCall] = i;
+ if (norm.Contains("cashput") || norm.Contains("cash_put") || norm.Contains("cash put")) map[SeriesColumn.CashPut] = i;
+ if (norm.Contains("ivcall") || norm.Contains("iv_call") || norm.Contains("iv call")) map[SeriesColumn.IvCall] = i;
+ if (norm.Contains("ivput") || norm.Contains("iv_put") || norm.Contains("iv put")) map[SeriesColumn.IvPut] = i;
+ if (norm.Contains("calldelta") || norm.Contains("call_delta") || norm.Contains("call delta")) map[SeriesColumn.CallDelta] = i;
+ if (norm.Contains("deltaput") || norm.Contains("delta_put") || norm.Contains("delta put")) map[SeriesColumn.DeltaPut] = i;
+ if (norm.Contains("cashneto") || norm.Contains("cash_neto") || norm.Contains("cash neto")) map[SeriesColumn.CashNeto] = i;
+ if (norm.Contains("ivneta") || norm.Contains("iv_neta") || norm.Contains("iv neta")) map[SeriesColumn.IvNeta] = i;
+ if (norm.Contains("deltaneto") || norm.Contains("delta_neto") || norm.Contains("delta neto")) map[SeriesColumn.DeltaNeto] = i;
+ if (norm.Contains("callask") || norm.Contains("call_ask") || norm.Contains("call ask")) map[SeriesColumn.CallAsk] = i;
+ if (norm.Contains("callbid") || norm.Contains("call_bid") || norm.Contains("call bid")) map[SeriesColumn.CallBid] = i;
+ if (norm.Contains("putask") || norm.Contains("put_ask") || norm.Contains("put ask")) map[SeriesColumn.PutAsk] = i;
+ if (norm.Contains("putbid") || norm.Contains("put_bid") || norm.Contains("put bid")) map[SeriesColumn.PutBid] = i;
+ if (norm.Contains("totalcall") || norm.Contains("total_call") || norm.Contains("total call")) map[SeriesColumn.TotalCall] = i;
+ if (norm.Contains("totalput") || norm.Contains("total_put") || norm.Contains("total put")) map[SeriesColumn.TotalPut] = i;
+ if (norm.Contains("sn") || norm.Contains("sneto") || norm.Contains("s_neto")) map[SeriesColumn.SNeto] = i;
  }
 
  return map;
