@@ -31,6 +31,7 @@ namespace ATAS.Indicators.Technical
         private readonly List<StrikeRow> _rows = new();
         private readonly System.Timers.Timer _timer = new(60000);
         private System.Timers.Timer? _hotkeyTimer;
+        private System.Timers.Timer? _autoConvTimer;
         private string _error = string.Empty;
         private DateTime? _lastLoad;
 
@@ -38,8 +39,23 @@ namespace ATAS.Indicators.Technical
         private Dictionary<decimal, (decimal calls, decimal puts)> _prevBySpy = new();
         private Dictionary<decimal, (decimal calls, decimal puts)> _prevByStrike = new();
 
+        // Base rows para auto-conversión (StrikeSpy + valores)
+        private readonly List<StrikeRow> _baseRows = new();
+
+        // Último precio del CSV (columna Price) para auto-conversión
+        private decimal _lastCsvPrice;
+        // Último timestamp usado del CSV (si existe)
+        private DateTime? _lastCsvTimestamp;
+
         // Precio ES en tiempo real (desde el gráfico)
         private decimal _lastEsPrice;
+
+        // Sticky factor para autoconversión por timestamp
+        private decimal? _tsStickyFactor;
+        private DateTime? _tsStickyAtUtc;
+
+        // Factor activo de conversión (se mantiene fijo hasta la siguiente ventana)
+        private decimal? _activeConvFactor;
 
         // Settings
         private string _filePath = @"C:\\Path\\To\\SPY_Cash.csv";
@@ -88,8 +104,53 @@ namespace ATAS.Indicators.Technical
             set { _enableConversion = value; ForceReload(); }
         }
 
+        // Conversión automática (usa Price del CSV y precio actual del gráfico)
+        private bool _enableAutoConversion;
+        [Display(GroupName = "1. Settings", Name = "Automatic conversion", Order =75)]
+        public bool EnableAutoConversion
+        {
+            get => _enableAutoConversion;
+            set
+            {
+                _enableAutoConversion = value;
+                ResetAutoConvTimer();
+                ForceReload();
+            }
+        }
+
+        private int _autoConversionSeconds = 10;
+        [Display(GroupName = "1. Settings", Name = "Auto conversion period (sec)", Order =76)]
+        [Range(1,3600)]
+        public int AutoConversionSeconds
+        {
+            get => _autoConversionSeconds;
+            set
+            {
+                _autoConversionSeconds = Math.Clamp(value, 1, 3600);
+                ResetAutoConvTimer();
+            }
+        }
+
+        // Alineación por timestamp para la conversión automática
+        private bool _autoConvUseTimestamp;
+        [Display(GroupName = "1. Settings", Name = "Auto conversion align by timestamp", Order =77)]
+        public bool AutoConversionAlignByTimestamp
+        {
+            get => _autoConvUseTimestamp;
+            set { _autoConvUseTimestamp = value; }
+        }
+
+        private int _autoConvToleranceSec = 2;
+        [Display(GroupName = "1. Settings", Name = "Timestamp tolerance (sec)", Order =78)]
+        [Range(0, 600)]
+        public int AutoConversionTimestampToleranceSec
+        {
+            get => _autoConvToleranceSec;
+            set { _autoConvToleranceSec = Math.Clamp(value, 0, 600); }
+        }
+
         // Tipo de perfil (preset de columnas)
-        public enum ProfileDataType { Custom, Cash, IV, Delta }
+        public enum ProfileDataType { Custom, Cash, IV, Delta, Gex }
         private ProfileDataType _profileType = ProfileDataType.Cash;
         [Display(GroupName = "1. Settings", Name = "Profile type", Order =40)]
         public ProfileDataType ProfileType
@@ -126,6 +187,10 @@ namespace ATAS.Indicators.Technical
             get => _putsColumnKey;
             set { _putsColumnKey = value ?? string.Empty; ForceReload(); }
         }
+
+        // Claves por defecto para GEX (se usan vía ProfileType -> ApplyProfilePreset)
+        private string _gexCallsColumnKey = "Call Gex";
+        private string _gexPutsColumnKey = "Put Gex";
 
         private decimal _manualSpyPrice;
         [Display(GroupName = "1. Settings", Name = "Manual SPY price", Order =90)]
@@ -229,7 +294,7 @@ namespace ATAS.Indicators.Technical
             set { _putsColor = value; RedrawChart(); }
         }
 
-        // Colores por perfil (IV y Delta)
+        // Colores por perfil (IV y Delta y GEX)
         private Color _ivCallsColor = Color.MediumSeaGreen;
         [Display(GroupName = "3. Appearance", Name = "IV Calls color", Order =60)]
         public Color IvCallsColor
@@ -260,6 +325,22 @@ namespace ATAS.Indicators.Technical
         {
             get => _deltaPutsColor;
             set { _deltaPutsColor = value; RedrawChart(); }
+        }
+
+        private Color _gexCallsColor = Color.MediumOrchid;
+        [Display(GroupName = "3. Appearance", Name = "GEX Calls color", Order =95)]
+        public Color GexCallsColor
+        {
+            get => _gexCallsColor;
+            set { _gexCallsColor = value; RedrawChart(); }
+        }
+
+        private Color _gexPutsColor = Color.Orchid;
+        [Display(GroupName = "3. Appearance", Name = "GEX Puts color", Order =96)]
+        public Color GexPutsColor
+        {
+            get => _gexPutsColor;
+            set { _gexPutsColor = value; RedrawChart(); }
         }
 
         private int _fillOpacity =140; //0..255
@@ -426,7 +507,7 @@ namespace ATAS.Indicators.Technical
             set { _summaryPutsColor = value; RedrawChart(); }
         }
 
-        // Colores del panel superior por perfil (IV y Delta)
+        // Colores del panel superior por perfil (IV, Delta y GEX)
         private Color _summaryCallsColorIv = Color.MediumSeaGreen;
         [Display(GroupName = "5. Top summary", Name = "IV Calls bar color", Order =110)]
         public Color SummaryCallsColorIV
@@ -459,6 +540,22 @@ namespace ATAS.Indicators.Technical
             set { _summaryPutsColorDelta = value; RedrawChart(); }
         }
 
+        private Color _summaryCallsColorGex = Color.MediumOrchid;
+        [Display(GroupName = "5. Top summary", Name = "GEX Calls bar color", Order =145)]
+        public Color SummaryCallsColorGEX
+        {
+            get => _summaryCallsColorGex;
+            set { _summaryCallsColorGex = value; RedrawChart(); }
+        }
+
+        private Color _summaryPutsColorGex = Color.Orchid;
+        [Display(GroupName = "5. Top summary", Name = "GEX Puts bar color", Order =146)]
+        public Color SummaryPutsColorGEX
+        {
+            get => _summaryPutsColorGex;
+            set { _summaryPutsColorGex = value; RedrawChart(); }
+        }
+
         // Mostrar SPY implícado centrado
         private bool _showSpyCurrent = true;
         [Display(GroupName = "5. Top summary", Name = "Show implied SPY below", Order =150)]
@@ -474,6 +571,15 @@ namespace ATAS.Indicators.Technical
         {
             get => _spyValueFormat;
             set { _spyValueFormat = value ?? string.Empty; }
+        }
+
+        // Color de textos del Top Summary
+        private Color _topSummaryTextColor = Color.White;
+        [Display(GroupName = "5. Top summary", Name = "Text color", Order =165)]
+        public Color TopSummaryTextColor
+        {
+            get => _topSummaryTextColor;
+            set { _topSummaryTextColor = value; RedrawChart(); }
         }
 
         private bool _useChartEs = true;
@@ -611,7 +717,7 @@ namespace ATAS.Indicators.Technical
             set { _netPutsColor = value; RedrawChart(); }
         }
 
-        // Nuevos: Colores NET por perfil (IV y Delta)
+        // Nuevos: Colores NET por perfil (IV, Delta, GEX)
         private Color _netCallsColorIv = Color.MediumSeaGreen;
         [Display(GroupName = "8. Net levels", Name = "Net Calls color (IV)", Order =60)]
         public Color NetCallsColorIV
@@ -642,6 +748,22 @@ namespace ATAS.Indicators.Technical
         {
             get => _netPutsColorDelta;
             set { _netPutsColorDelta = value; RedrawChart(); }
+        }
+
+        private Color _netCallsColorGex = Color.MediumOrchid;
+        [Display(GroupName = "8. Net levels", Name = "Net Calls color (GEX)", Order =91)]
+        public Color NetCallsColorGEX
+        {
+            get => _netCallsColorGex;
+            set { _netCallsColorGex = value; RedrawChart(); }
+        }
+
+        private Color _netPutsColorGex = Color.Orchid;
+        [Display(GroupName = "8. Net levels", Name = "Net Puts color (GEX)", Order =92)]
+        public Color NetPutsColorGEX
+        {
+            get => _netPutsColorGex;
+            set { _netPutsColorGex = value; RedrawChart(); }
         }
 
         // Previous value markers (for last snapshot)
@@ -723,6 +845,146 @@ namespace ATAS.Indicators.Technical
             set { _prevNetNegativeColor = value; RedrawChart(); }
         }
 
+        // 11. Alerts - NET change panel
+        private bool _showNetChangePanel = false;
+        private decimal _netChangeThresholdPercent = 5m;
+        private int _netChangeMaxItems = 5;
+        private int _netChangeFontSize = 10;
+        private Color _netChangeTextColor = Color.Khaki;
+
+        [Display(GroupName = "11. Alerts", Name = "Show NET change panel", Order = 10)]
+        public bool ShowNetChangePanel
+        {
+            get => _showNetChangePanel;
+            set { _showNetChangePanel = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "NET change threshold %", Order = 20)]
+        [Range(0, 1000)]
+        public decimal NetChangeThresholdPercent
+        {
+            get => _netChangeThresholdPercent;
+            set { _netChangeThresholdPercent = Math.Clamp(value, 0m, 1000m); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Max items", Order = 30)]
+        [Range(1, 100)]
+        public int NetChangeMaxItems
+        {
+            get => _netChangeMaxItems;
+            set { _netChangeMaxItems = Math.Clamp(value, 1, 100); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Font size", Order = 40)]
+        [Range(6, 40)]
+        public int NetChangeFontSize
+        {
+            get => _netChangeFontSize;
+            set { _netChangeFontSize = Math.Clamp(value, 6, 40); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Text color", Order = 50)]
+        public Color NetChangeTextColor
+        {
+            get => _netChangeTextColor;
+            set { _netChangeTextColor = value; }
+        }
+
+        // 12. Big trades (marcadores de incrementos grandes por strike)
+        private bool _showBigTradeMarkers = false;
+        private decimal _bigTradeThreshold = 1000m; // cambio mínimo para mostrar
+        private int _bigTradeBaseRadius = 6; // radio mínimo
+        private int _bigTradeMaxRadius = 40; // radio máximo
+        private decimal _bigTradeRadiusPerUnit = 0.01m; // incremento de radio por unidad sobre el umbral
+        private int _bigTradeOffsetPx = 6; // separación desde el extremo de la barra
+        private Color _bigTradeCallsColor = Color.Gold;
+        private Color _bigTradePutsColor = Color.OrangeRed;
+        private bool _bigTradeShowValue = true;
+        private Color _bigTradeTextColor = Color.Black;
+        private int _bigTradeFontSize = 8;
+
+        [Display(GroupName = "12. Big trades", Name = "Show big trade markers", Order = 10)]
+        public bool ShowBigTradeMarkers
+        {
+            get => _showBigTradeMarkers;
+            set { _showBigTradeMarkers = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Change threshold", Order = 20)]
+        [Range(1, 100000000)]
+        public decimal BigTradeThreshold
+        {
+            get => _bigTradeThreshold;
+            set { _bigTradeThreshold = Math.Clamp(value, 1m, 100000000m); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Base radius (px)", Order = 30)]
+        [Range(2, 200)]
+        public int BigTradeBaseRadius
+        {
+            get => _bigTradeBaseRadius;
+            set { _bigTradeBaseRadius = Math.Clamp(value, 2, 200); RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Max radius (px)", Order = 40)]
+        [Range(2, 400)]
+        public int BigTradeMaxRadius
+        {
+            get => _bigTradeMaxRadius;
+            set { _bigTradeMaxRadius = Math.Clamp(value, 2, 400); RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Radius per unit", Order = 50)]
+        public decimal BigTradeRadiusPerUnit
+        {
+            get => _bigTradeRadiusPerUnit;
+            set { _bigTradeRadiusPerUnit = value <= 0 ? 0.0001m : value; }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Offset from bar (px)", Order = 60)]
+        [Range(0, 500)]
+        public int BigTradeOffsetPx
+        {
+            get => _bigTradeOffsetPx;
+            set { _bigTradeOffsetPx = Math.Clamp(value, 0, 500); RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Calls marker color", Order = 70)]
+        public Color BigTradeCallsColor
+        {
+            get => _bigTradeCallsColor;
+            set { _bigTradeCallsColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Puts marker color", Order = 80)]
+        public Color BigTradePutsColor
+        {
+            get => _bigTradePutsColor;
+            set { _bigTradePutsColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Show value inside", Order = 90)]
+        public bool BigTradeShowValue
+        {
+            get => _bigTradeShowValue;
+            set { _bigTradeShowValue = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Value text color", Order = 100)]
+        public Color BigTradeTextColor
+        {
+            get => _bigTradeTextColor;
+            set { _bigTradeTextColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "12. Big trades", Name = "Font size", Order = 110)]
+        [Range(6, 60)]
+        public int BigTradeFontSize
+        {
+            get => _bigTradeFontSize;
+            set { _bigTradeFontSize = Math.Clamp(value, 6, 60); RedrawChart(); }
+        }
+
         public CashProfile()
         {
             EnableCustomDrawing = true;
@@ -737,6 +999,10 @@ namespace ATAS.Indicators.Technical
             _hotkeyTimer = new System.Timers.Timer(30) { AutoReset = true, Enabled = true };
             _hotkeyTimer.Elapsed += OnHotkeyTimer;
             _hotkeyTimer.Start();
+
+            // Auto conversion timer (desactivado por defecto)
+            _autoConvTimer = new System.Timers.Timer(10000) { AutoReset = true, Enabled = false };
+            _autoConvTimer.Elapsed += OnAutoConvTimer;
         }
 
         protected override void OnInitialize()
@@ -787,8 +1053,18 @@ namespace ATAS.Indicators.Technical
             }
 
             // Scale per side
-            var maxCalls = snapshot.Max(r => (double)r.Calls);
-            var maxPuts = snapshot.Max(r => (double)r.Puts);
+            double maxCalls;
+            double maxPuts;
+            if (_profileType == ProfileDataType.Gex)
+            {
+                maxCalls = snapshot.Max(r => (double)Math.Abs(r.Calls));
+                maxPuts = snapshot.Max(r => (double)Math.Abs(r.Puts));
+            }
+            else
+            {
+                maxCalls = snapshot.Max(r => (double)r.Calls);
+                maxPuts = snapshot.Max(r => (double)r.Puts);
+            }
             var maxSide = Math.Max(maxCalls, maxPuts);
             if (maxSide <=0)
                 return;
@@ -812,8 +1088,10 @@ namespace ATAS.Indicators.Technical
                 var y = ChartInfo.PriceChartContainer.GetYByPrice(row.Strike, false);
                 var top = y - _barThicknessPx /2;
 
-                var callsW = (int)Math.Round((double)row.Calls * scale);
-                var putsW = (int)Math.Round((double)row.Puts * scale);
+                var callsMag = _profileType == ProfileDataType.Gex ? Math.Abs(row.Calls) : row.Calls;
+                var putsMag = _profileType == ProfileDataType.Gex ? Math.Abs(row.Puts) : row.Puts;
+                var callsW = (int)Math.Round((double)callsMag * scale);
+                var putsW = (int)Math.Round((double)putsMag * scale);
 
                 // Selección de color por perfil
                 Color callsBase, putsBase;
@@ -823,6 +1101,8 @@ namespace ATAS.Indicators.Technical
                         callsBase = _ivCallsColor; putsBase = _ivPutsColor; break;
                     case ProfileDataType.Delta:
                         callsBase = _deltaCallsColor; putsBase = _deltaPutsColor; break;
+                    case ProfileDataType.Gex:
+                        callsBase = _gexCallsColor; putsBase = _gexPutsColor; break;
                     case ProfileDataType.Cash:
                     case ProfileDataType.Custom:
                     default:
@@ -866,8 +1146,9 @@ namespace ATAS.Indicators.Technical
                     // Calls marker (on the calls side)
                     if (_prevMarkerMode == PrevMarkerMode.Calls || _prevMarkerMode == PrevMarkerMode.Both)
                     {
-                        var prevCallsW = (int)Math.Round((double)prev.prevCalls * scale);
-                        if (prev.prevCalls >0 && prevCallsW >=0)
+                        var prevCallsMag = _profileType == ProfileDataType.Gex ? Math.Abs(prev.prevCalls) : prev.prevCalls;
+                        var prevCallsW = (int)Math.Round((double)prevCallsMag * scale);
+                        if (prevCallsMag >0 && prevCallsW >=0)
                         {
                             int size = _prevMarkerSize;
                             int mx = _callsOnRight ? (xCenter + prevCallsW) : (xCenter - prevCallsW);
@@ -879,8 +1160,9 @@ namespace ATAS.Indicators.Technical
                     // Puts marker (on the puts side)
                     if (_prevMarkerMode == PrevMarkerMode.Puts || _prevMarkerMode == PrevMarkerMode.Both)
                     {
-                        var prevPutsW = (int)Math.Round((double)prev.prevPuts * scale);
-                        if (prev.prevPuts >0 && prevPutsW >=0)
+                        var prevPutsMag = _profileType == ProfileDataType.Gex ? Math.Abs(prev.prevPuts) : prev.prevPuts;
+                        var prevPutsW = (int)Math.Round((double)prevPutsMag * scale);
+                        if (prevPutsMag >0 && prevPutsW >=0)
                         {
                             int size = _prevMarkerSize;
                             int mx = _callsOnRight ? (xCenter - prevPutsW) : (xCenter + prevPutsW);
@@ -891,10 +1173,12 @@ namespace ATAS.Indicators.Technical
                     }
                 }
 
-                // Net level (Calls - Puts)
+                // Net level (Calls - Puts) o GEX (Calls + Puts si Puts<0)
                 if (_showNetLevels)
                 {
-                    var diff = row.Calls - row.Puts;
+                    var diff = _profileType == ProfileDataType.Gex
+                        ? (row.Calls + row.Puts)
+                        : (row.Calls - row.Puts);
                     if (diff !=0)
                     {
                         int w = (int)Math.Round((double)Math.Abs(diff) * scale);
@@ -911,6 +1195,8 @@ namespace ATAS.Indicators.Technical
                                     netCallsBase = _netCallsColorIv; netPutsBase = _netPutsColorIv; break;
                                 case ProfileDataType.Delta:
                                     netCallsBase = _netCallsColorDelta; netPutsBase = _netPutsColorDelta; break;
+                                case ProfileDataType.Gex:
+                                    netCallsBase = _netCallsColorGex; netPutsBase = _netPutsColorGex; break;
                                 case ProfileDataType.Cash:
                                 case ProfileDataType.Custom:
                                 default:
@@ -919,7 +1205,7 @@ namespace ATAS.Indicators.Technical
 
                             if (diff >0)
                             {
-                                // Calls dominan -> dibujar hacia el lado Calls
+                                // Dominio Calls -> dibujar hacia Calls
                                 if (_callsOnRight)
                                 {
                                     var r = new Rectangle(xCenter, topNet, w, t);
@@ -931,7 +1217,7 @@ namespace ATAS.Indicators.Technical
                                     context.FillRectangle(Color.FromArgb(_netOpacity, netCallsBase), r);
                                 }
                             }
-                            else // diff <0 -> Puts dominan
+                            else // diff <0 -> Dominio Puts
                             {
                                 if (_callsOnRight)
                                 {
@@ -955,7 +1241,9 @@ namespace ATAS.Indicators.Technical
                     if (!prevBySpy.TryGetValue(row.StrikeSpy, out prev))
                         prevByStrike.TryGetValue(row.Strike, out prev);
 
-                    var prevDiff = prev.prevCalls - prev.prevPuts;
+                    var prevDiff = _profileType == ProfileDataType.Gex
+                        ? (prev.prevCalls + prev.prevPuts)
+                        : (prev.prevCalls - prev.prevPuts);
                     if (prevDiff !=0)
                     {
                         int prevW = (int)Math.Round((double)Math.Abs(prevDiff) * scale);
@@ -977,13 +1265,74 @@ namespace ATAS.Indicators.Technical
                     }
                 }
 
+                // Big trade markers (incrementos grandes respecto al snapshot previo)
+                if (_showBigTradeMarkers)
+                {
+                    (decimal prevCalls, decimal prevPuts) prevVals;
+                    if (!prevBySpy.TryGetValue(row.StrikeSpy, out prevVals))
+                        prevByStrike.TryGetValue(row.Strike, out prevVals);
+
+                    // Diferencias según perfil (en GEX usamos magnitudes, en otros valores directos)
+                    decimal callsDiff = _profileType == ProfileDataType.Gex
+                        ? Math.Abs(row.Calls) - Math.Abs(prevVals.prevCalls)
+                        : (row.Calls - prevVals.prevCalls);
+                    decimal putsDiff = _profileType == ProfileDataType.Gex
+                        ? Math.Abs(row.Puts) - Math.Abs(prevVals.prevPuts)
+                        : (row.Puts - prevVals.prevPuts);
+
+                    // Dibujar marcador para Calls
+                    if (callsDiff >= _bigTradeThreshold && callsDiff > 0)
+                    {
+                        int radius = _bigTradeBaseRadius + (int)Math.Round((double)((callsDiff - _bigTradeThreshold) * _bigTradeRadiusPerUnit));
+                        radius = Math.Clamp(radius, _bigTradeBaseRadius, _bigTradeMaxRadius);
+                        int tipX = _callsOnRight ? (xCenter + callsW) : (xCenter - callsW);
+                        int cx = _callsOnRight ? (tipX + _bigTradeOffsetPx + radius) : (tipX - _bigTradeOffsetPx - radius);
+                        int cy = y;
+                        var ellipseRect = new Rectangle(cx - radius, cy - radius, radius * 2, radius * 2);
+                        try { context.FillEllipse(Color.FromArgb(180, _bigTradeCallsColor), ellipseRect); } catch { context.FillRectangle(Color.FromArgb(180, _bigTradeCallsColor), ellipseRect); }
+
+                        if (_bigTradeShowValue)
+                        {
+                            var fontBt = new RenderFont("Arial", _bigTradeFontSize);
+                            string txt = FormatCompact(callsDiff);
+                            int tw = EstimateTextWidth(txt, fontBt);
+                            int tx = cx - tw / 2;
+                            int ty = cy - (_bigTradeFontSize / 2);
+                            context.DrawString(txt, fontBt, _bigTradeTextColor, tx, ty);
+                        }
+                    }
+
+                    // Dibujar marcador para Puts
+                    if (putsDiff >= _bigTradeThreshold && putsDiff > 0)
+                    {
+                        int radius = _bigTradeBaseRadius + (int)Math.Round((double)((putsDiff - _bigTradeThreshold) * _bigTradeRadiusPerUnit));
+                        radius = Math.Clamp(radius, _bigTradeBaseRadius, _bigTradeMaxRadius);
+                        int tipX = _callsOnRight ? (xCenter - putsW) : (xCenter + putsW);
+                        int cx = _callsOnRight ? (tipX - _bigTradeOffsetPx - radius) : (tipX + _bigTradeOffsetPx + radius);
+                        int cy = y;
+                        var ellipseRect = new Rectangle(cx - radius, cy - radius, radius * 2, radius * 2);
+                        try { context.FillEllipse(Color.FromArgb(180, _bigTradePutsColor), ellipseRect); } catch { context.FillRectangle(Color.FromArgb(180, _bigTradePutsColor), ellipseRect); }
+
+                        if (_bigTradeShowValue)
+                        {
+                            var fontBt = new RenderFont("Arial", _bigTradeFontSize);
+                            string txt = FormatCompact(putsDiff);
+                            int tw = EstimateTextWidth(txt, fontBt);
+                            int tx = cx - tw / 2;
+                            int ty = cy - (_bigTradeFontSize / 2);
+                            context.DrawString(txt, fontBt, _bigTradeTextColor, tx, ty);
+                        }
+                    }
+                }
+
                 // Values and strikes near bars
                 if (_showValues)
                 {
                     // left value
                     if (leftW >0)
                     {
-                        var valTxt = (_callsOnRight ? row.Puts : row.Calls).ToString(_valueFormat, CultureInfo.InvariantCulture);
+                        var leftVal = _callsOnRight ? putsMag : callsMag;
+                        var valTxt = leftVal.ToString(_valueFormat, CultureInfo.InvariantCulture);
                         int valW = EstimateTextWidth(valTxt, sideFont);
                         int valX = xCenter - leftW - valW -6;
                         int valY = top -2;
@@ -1002,7 +1351,8 @@ namespace ATAS.Indicators.Technical
                     // right value
                     if (rightW >0)
                     {
-                        var valTxt = (_callsOnRight ? row.Calls : row.Puts).ToString(_valueFormat, CultureInfo.InvariantCulture);
+                        var rightVal = _callsOnRight ? callsMag : putsMag;
+                        var valTxt = rightVal.ToString(_valueFormat, CultureInfo.InvariantCulture);
                         int valX = xCenter + rightW +6;
                         int valY = top -2;
                         context.DrawString(valTxt, sideFont, rightColor, valX, valY);
@@ -1025,15 +1375,15 @@ namespace ATAS.Indicators.Technical
             // Max lines
             if (snapshot.Count >0)
             {
-                var maxCallsRow = snapshot.OrderByDescending(r => r.Calls).FirstOrDefault();
-                var maxPutsRow = snapshot.OrderByDescending(r => r.Puts).FirstOrDefault();
-                if (_showMaxCallsLine && maxCallsRow != null && maxCallsRow.Calls >0)
+                var maxCallsRow = snapshot.OrderByDescending(r => _profileType == ProfileDataType.Gex ? Math.Abs(r.Calls) : r.Calls).FirstOrDefault();
+                var maxPutsRow = snapshot.OrderByDescending(r => _profileType == ProfileDataType.Gex ? Math.Abs(r.Puts) : r.Puts).FirstOrDefault();
+                if (_showMaxCallsLine && maxCallsRow != null && (_profileType == ProfileDataType.Gex ? Math.Abs(maxCallsRow.Calls) : maxCallsRow.Calls) >0)
                 {
                     var yC = ChartInfo.PriceChartContainer.GetYByPrice(maxCallsRow.Strike, false);
                     var penC = new RenderPen(_maxCallsLineColor, _maxLinesThickness) { DashStyle = _maxLinesDash };
                     context.DrawLine(penC,0, yC, fullWidth, yC);
                 }
-                if (_showMaxPutsLine && maxPutsRow != null && maxPutsRow.Puts >0)
+                if (_showMaxPutsLine && maxPutsRow != null && (_profileType == ProfileDataType.Gex ? Math.Abs(maxPutsRow.Puts) : maxPutsRow.Puts) >0)
                 {
                     var yP = ChartInfo.PriceChartContainer.GetYByPrice(maxPutsRow.Strike, false);
                     var penP = new RenderPen(_maxPutsLineColor, _maxLinesThickness) { DashStyle = _maxLinesDash };
@@ -1045,6 +1395,62 @@ namespace ATAS.Indicators.Technical
             {
                 context.DrawString($"Last load: {_lastLoad.Value:HH:mm:ss}", new RenderFont("Arial",8), Color.Gray,10,26);
             }
+
+            // Draw NET change panel (top-left)
+            if (_showNetChangePanel)
+            {
+                try
+                {
+                    var alertFont = new RenderFont("Arial", _netChangeFontSize);
+                    int panelY = 42; // under the 'Last load' line
+                    int panelX = 10;
+
+                    // Build change list comparing to previous snapshot by SPY strike
+                    var changes = new List<(decimal spyStrike, decimal changePct, decimal prevNet, decimal currNet)>();
+                    foreach (var row in snapshot)
+                    {
+                        if (!_prevBySpy.TryGetValue(row.StrikeSpy, out var prevVals))
+                            continue;
+                        decimal prevNet = _profileType == ProfileDataType.Gex
+                            ? (prevVals.calls + prevVals.puts)
+                            : (prevVals.calls - prevVals.puts);
+                        decimal currNet = _profileType == ProfileDataType.Gex
+                            ? (row.Calls + row.Puts)
+                            : (row.Calls - row.Puts);
+
+                        if (prevNet == 0)
+                            continue; // avoid div by zero / noisy items
+
+                        var pct = (currNet - prevNet) / prevNet * 100m;
+                        if (Math.Abs(pct) >= _netChangeThresholdPercent)
+                            changes.Add((row.StrikeSpy, pct, prevNet, currNet));
+                    }
+
+                    if (changes.Count > 0)
+                    {
+                        // Order by magnitude desc and take max items
+                        var ordered = changes
+                            .OrderByDescending(c => Math.Abs(c.changePct))
+                            .Take(_netChangeMaxItems)
+                            .ToList();
+
+                        // Header
+                        string hdr = $"Cambios NET >= {_netChangeThresholdPercent}%:";
+                        context.DrawString(hdr, alertFont, _netChangeTextColor, panelX, panelY);
+                        panelY += _netChangeFontSize + 4;
+
+                        foreach (var it in ordered)
+                        {
+                            string dir = it.changePct > 0 ? "aumenta" : "disminuye";
+                            string side = it.currNet > 0 ? "Neto Calls" : (it.currNet < 0 ? "Neto Puts" : "Neto");
+                            string line = $"Strike {it.spyStrike.ToString(_strikeFormat, CultureInfo.InvariantCulture)} {side} {dir} {Math.Abs(it.changePct):0.##}%";
+                            context.DrawString(line, alertFont, _netChangeTextColor, panelX, panelY);
+                            panelY += _netChangeFontSize + 2;
+                        }
+                    }
+                }
+                catch { }
+            }
         }
 
         private Color GetSummaryTextColorValue() => Color.White;
@@ -1052,9 +1458,29 @@ namespace ATAS.Indicators.Technical
 
         private void DrawTopSummary(RenderContext context, int xCenter, List<StrikeRow> snapshot)
         {
-            decimal sumCalls = snapshot.Sum(r => r.Calls);
-            decimal sumPuts = snapshot.Sum(r => r.Puts);
-            decimal sumTotal = sumCalls + sumPuts;
+            // Sumas base
+            decimal sumCallsRaw = snapshot.Sum(r => r.Calls);
+            decimal sumPutsRaw = snapshot.Sum(r => r.Puts);
+            decimal sumCallsAbs = snapshot.Sum(r => Math.Abs(r.Calls));
+            decimal sumPutsAbs = snapshot.Sum(r => Math.Abs(r.Puts));
+
+            // Valores por defecto (no GEX)
+            decimal callsRowValue = sumCallsRaw;
+            decimal putsRowValue = sumPutsRaw;
+            decimal rowsDenom = callsRowValue + putsRowValue;
+            if (_profileType == ProfileDataType.Gex)
+            {
+                // En GEX, las Puts suelen ser negativas. Usamos magnitudes para filas Calls/Puts
+                callsRowValue = sumCallsAbs;
+                putsRowValue = sumPutsAbs;
+                rowsDenom = callsRowValue + putsRowValue;
+            }
+            if (rowsDenom <= 0) rowsDenom = 1;
+
+            // Total: en GEX usamos NET (suma con signo), en otros perfiles, suma normal
+            decimal totalValue = _profileType == ProfileDataType.Gex ? (sumCallsRaw + sumPutsRaw) : (sumCallsRaw + sumPutsRaw);
+            decimal totalDenom = _profileType == ProfileDataType.Gex ? (callsRowValue + putsRowValue) : totalValue;
+            if (totalDenom <= 0) totalDenom = 1;
 
             var font = new RenderFont("Arial", _topFontSize);
             int rowH = _summaryRowHeightPx;
@@ -1069,15 +1495,16 @@ namespace ATAS.Indicators.Technical
 
             int y = _topMarginPx;
 
-            // Capturar colores locales para usarlos en la función local
-            Color summaryTextColorLocal = Color.White;
-            Color summaryTotalColorLocal = Color.SteelBlue;
+            // Colores
+            Color summaryTextColorLocal = _topSummaryTextColor;
+            Color summaryTotalColorValue = Color.SteelBlue;
 
             string callsLabel = _profileType switch
             {
                 ProfileDataType.Cash => "Calls $$$",
                 ProfileDataType.IV => "IV Call",
                 ProfileDataType.Delta => "Delta Call",
+                ProfileDataType.Gex => "GEX Call",
                 _ => "Calls"
             };
             string putsLabel = _profileType switch
@@ -1085,12 +1512,14 @@ namespace ATAS.Indicators.Technical
                 ProfileDataType.Cash => "Puts $$$",
                 ProfileDataType.IV => "IV Put",
                 ProfileDataType.Delta => "Delta Put",
+                ProfileDataType.Gex => "GEX Put",
                 _ => "Puts"
             };
             string totalLabel = _profileType switch
             {
                 ProfileDataType.Cash => "TOTAL $$$",
                 ProfileDataType.Delta => "TOTAL DELTA",
+                ProfileDataType.Gex => "TOTAL GEX",
                 _ => "TOTAL"
             };
 
@@ -1102,6 +1531,8 @@ namespace ATAS.Indicators.Technical
                     sumCallsCol = _summaryCallsColorIv; sumPutsCol = _summaryPutsColorIv; break;
                 case ProfileDataType.Delta:
                     sumCallsCol = _summaryCallsColorDelta; sumPutsCol = _summaryPutsColorDelta; break;
+                case ProfileDataType.Gex:
+                    sumCallsCol = _summaryCallsColorGex; sumPutsCol = _summaryPutsColorGex; break;
                 case ProfileDataType.Cash:
                 case ProfileDataType.Custom:
                 default:
@@ -1132,43 +1563,82 @@ namespace ATAS.Indicators.Technical
                 y += rowH + gap;
             }
 
-            DrawRow(callsLabel, sumCalls, sumCallsCol, sumTotal);
-            DrawRow(putsLabel, sumPuts, sumPutsCol, sumTotal);
+            // Filas Calls/Puts
+            DrawRow(callsLabel, callsRowValue, sumCallsCol, rowsDenom);
+            DrawRow(putsLabel, putsRowValue, sumPutsCol, rowsDenom);
 
-            // TOTAL: color del dominante (Calls o Puts). Si iguales, usar color fallback.
-            Color totalColor = sumCalls > sumPuts ? sumCallsCol : (sumPuts > sumCalls ? sumPutsCol : summaryTotalColorLocal);
-            DrawRow(totalLabel, sumTotal, totalColor, sumTotal <=0 ?1 : sumTotal);
+            // TOTAL: color del signo en GEX, o dominante en otros casos
+            Color totalColor = _profileType == ProfileDataType.Gex
+                ? (totalValue > 0 ? sumCallsCol : (totalValue < 0 ? sumPutsCol : summaryTotalColorValue))
+                : (sumCallsRaw > sumPutsRaw ? sumCallsCol : (sumPutsRaw > sumCallsRaw ? sumPutsCol : summaryTotalColorValue));
 
-            // SPY implicado centrado debajo del panel superior (ratio = ManualES / ManualSPY)
+            DrawRow(totalLabel, totalValue, totalColor, totalDenom);
+
+            // SPY implicado centrado debajo del panel superior
             if (_showSpyCurrent)
             {
-                // Precio ES en tiempo real (gráfico)
-                decimal esNow = _useChartEs && _lastEsPrice >0 ? _lastEsPrice :0m;
-                if (esNow <=0 && !string.IsNullOrWhiteSpace(_quotesCsvPath) && File.Exists(_quotesCsvPath))
+                decimal? spyNowVal = null;
+
+                // Si hay autoconversión y tenemos factor activo, usar ES en tiempo real dividido por el factor activo
+                if (_enableAutoConversion && _activeConvFactor.HasValue && _activeConvFactor.Value > 0)
                 {
-                    // fallback a último ES del CSV de quotes
-                    if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyQ, out var esQ) && esQ >0)
-                        esNow = esQ;
+                    decimal esNow = 0m;
+                    if (_useChartEs && _lastEsPrice > 0)
+                        esNow = _lastEsPrice;
+                    // fallback a último ES del CSV de quotes si existe
+                    if (esNow <= 0 && !string.IsNullOrWhiteSpace(_quotesCsvPath) && File.Exists(_quotesCsvPath))
+                    {
+                        if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyQ, out var esQ) && esQ > 0)
+                            esNow = esQ;
+                    }
+
+                    if (esNow > 0)
+                        spyNowVal = SafeDiv(esNow, _activeConvFactor.Value);
                 }
 
-                if (esNow >0)
+                // Si no hay autoconversión o no tenemos factor, aplicar lógicas previas
+                if (spyNowVal == null)
                 {
-                    decimal ratio =0m;
-                    if (_manualEsPrice >0 && _manualSpyPrice >0)
-                        ratio = SafeDiv(_manualEsPrice, _manualSpyPrice);
-                    else if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyL, out var esL) && spyL >0)
-                        ratio = SafeDiv(esL, spyL);
-                    if (ratio <=0) ratio =1m;
+                    decimal esNow = 0m;
+                    if (_autoConvUseTimestamp && _lastCsvTimestamp.HasValue && !string.IsNullOrWhiteSpace(_quotesCsvPath) && File.Exists(_quotesCsvPath))
+                    {
+                        if (!TryGetClosestEsByTimestamp(_quotesCsvPath, _lastCsvTimestamp.Value, _autoConvToleranceSec, out esNow))
+                            esNow = _useChartEs && _lastEsPrice > 0 ? _lastEsPrice : 0m;
+                    }
+                    else
+                    {
+                        esNow = _useChartEs && _lastEsPrice > 0 ? _lastEsPrice : 0m;
+                    }
 
-                    var spyNow = SafeDiv(esNow, ratio);
-                    var text = $"SPY: {spyNow.ToString(_spyValueFormat, CultureInfo.InvariantCulture)}";
+                    if (esNow <= 0 && !string.IsNullOrWhiteSpace(_quotesCsvPath) && File.Exists(_quotesCsvPath))
+                    {
+                        if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyL, out var esL) && esL > 0)
+                            esNow = esL;
+                    }
+
+                    if (esNow > 0)
+                    {
+                        decimal ratio = 0m;
+                        if (_enableConversion && _manualEsPrice > 0 && _manualSpyPrice > 0)
+                            ratio = SafeDiv(_manualEsPrice, _manualSpyPrice);
+                        else if (TryGetLatestSpyEsFromQuotes(_quotesCsvPath, out var spyL, out var esL) && spyL > 0)
+                            ratio = SafeDiv(esL, spyL);
+                        if (ratio > 0)
+                            spyNowVal = SafeDiv(esNow, ratio);
+                    }
+                }
+
+                if (spyNowVal.HasValue)
+                {
+                    var text = $"SPY: {spyNowVal.Value.ToString(_spyValueFormat, CultureInfo.InvariantCulture)}";
                     int textW = EstimateTextWidth(text, font);
-                    int cx = xCenter - textW /2;
+                    int cx = xCenter - textW / 2;
                     int spyY = y;
-                    context.DrawString(text, font, summaryTextColorLocal, cx, spyY + (rowH - _topFontSize) /2);
+                    context.DrawString(text, font, summaryTextColorLocal, cx, spyY + (rowH - _topFontSize) / 2);
                     y += rowH + gap;
                 }
             }
+            // end SPY summary
         }
 
         private void ApplyProfilePreset()
@@ -1187,6 +1657,10 @@ namespace ATAS.Indicators.Technical
                     _callsColumnKey = "Call Delta";
                     _putsColumnKey = "Delta Put"; // nombre habitual en CSV
                     break;
+                case ProfileDataType.Gex:
+                    _callsColumnKey = _gexCallsColumnKey;
+                    _putsColumnKey = _gexPutsColumnKey;
+                    break;
                 case ProfileDataType.Custom:
                 default:
                     // Mantener claves actuales
@@ -1201,6 +1675,19 @@ namespace ATAS.Indicators.Technical
             _timer.Stop();
             _timer.Interval = Math.Max(5, _refreshSeconds) *1000;
             _timer.Start();
+        }
+
+        private void ResetAutoConvTimer()
+        {
+            if (_autoConvTimer == null)
+                return;
+
+            _autoConvTimer.Stop();
+            if (_enableAutoConversion)
+            {
+                _autoConvTimer.Interval = Math.Max(1, _autoConversionSeconds) * 1000;
+                _autoConvTimer.Start();
+            }
         }
 
         private void OnTimer(object? sender, System.Timers.ElapsedEventArgs e)
@@ -1228,17 +1715,76 @@ namespace ATAS.Indicators.Technical
                 var prevByStrikeLocal = prevSnapshot.ToDictionary(r => r.Strike, r => (r.Calls, r.Puts));
 
                 var data = LoadCsv(FilePath, UseLatestTimestamp, out var err,
-                    EnableConversion, QuotesCsvPath, ManualSpyPrice, ManualEsPrice, PriceStep,
-                    CallsColumnKey, PutsColumnKey);
+                    EnableConversion, EnableAutoConversion, QuotesCsvPath, ManualSpyPrice, ManualEsPrice, PriceStep,
+                    CallsColumnKey, PutsColumnKey, out var lastPriceFromCsv, out var lastTsFromCsv);
+
+                bool firstAutoInitNeeded;
                 lock (_sync)
                 {
                     _prevBySpy = prevBySpyLocal;
                     _prevByStrike = prevByStrikeLocal;
-                    _rows.Clear();
-                    _rows.AddRange(data);
+
+                    // Actualizar bases con SPY y valores
+                    _baseRows.Clear();
+                    _baseRows.AddRange(data.Select(r => new StrikeRow
+                    {
+                        Strike = r.Strike, // aquí r.Strike es SPY si autoconv está activo
+                        StrikeSpy = r.StrikeSpy,
+                        Calls = r.Calls,
+                        Puts = r.Puts
+                    }));
+
+                    _lastCsvPrice = lastPriceFromCsv;
+                    _lastCsvTimestamp = lastTsFromCsv;
+
+                    firstAutoInitNeeded = _enableAutoConversion && _rows.Count == 0;
+
+                    if (!_enableAutoConversion)
+                    {
+                        // Sin autoconversión: actualizar directamente lo visible
+                        _rows.Clear();
+                        _rows.AddRange(data);
+                    }
                 }
+
                 _error = err ?? string.Empty;
                 _lastLoad = DateTime.Now;
+
+                // Autoconversión
+                if (_enableAutoConversion)
+                {
+                    if (firstAutoInitNeeded)
+                    {
+                        // Calcular factor inicial
+                        if (_autoConvUseTimestamp)
+                        {
+                            var f = EnsureTimestampFactor(true);
+                            if (f.HasValue && f.Value > 0)
+                            {
+                                _activeConvFactor = f.Value;
+                                ApplyConversionWithFactor(f.Value);
+                            }
+                        }
+                        else if (_lastCsvPrice > 0 && _lastEsPrice > 0)
+                        {
+                            var f = SafeDiv(_lastEsPrice, _lastCsvPrice);
+                            if (f > 0)
+                            {
+                                _activeConvFactor = f;
+                                ApplyConversionWithFactor(f);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Mantener posiciones: re-aplicar conversión con el factor activo si existe (actualiza cantidades)
+                        if (_activeConvFactor.HasValue && _activeConvFactor.Value > 0)
+                        {
+                            ApplyConversionWithFactor(_activeConvFactor.Value);
+                        }
+                    }
+                }
+
                 RedrawChart();
             }
             catch (Exception ex)
@@ -1247,19 +1793,120 @@ namespace ATAS.Indicators.Technical
             }
         }
 
+        private void ApplyConversionWithFactor(decimal factor)
+        {
+            List<StrikeRow> baseSnapshot;
+            decimal step;
+            lock (_sync)
+            {
+                baseSnapshot = _baseRows.ToList();
+                step = _priceStep;
+            }
+
+            var agg = new Dictionary<decimal, (decimal calls, decimal puts, decimal spyStrike)>();
+            foreach (var br in baseSnapshot)
+            {
+                var outStrike = br.StrikeSpy * factor;
+                if (step > 0)
+                    outStrike = RoundToStep(outStrike, step);
+
+                if (!agg.TryGetValue(outStrike, out var tuple))
+                    agg[outStrike] = (br.Calls, br.Puts, br.StrikeSpy);
+                else
+                    agg[outStrike] = (tuple.calls + br.Calls, tuple.puts + br.Puts, tuple.spyStrike);
+            }
+
+            var converted = new List<StrikeRow>(agg.Count);
+            foreach (var kv in agg)
+            {
+                converted.Add(new StrikeRow
+                {
+                    Strike = kv.Key,
+                    StrikeSpy = kv.Value.spyStrike,
+                    Calls = kv.Value.calls,
+                    Puts = kv.Value.puts
+                });
+            }
+
+            lock (_sync)
+            {
+                _rows.Clear();
+                _rows.AddRange(converted);
+            }
+        }
+
+        private void RecalculateConversionPositions()
+        {
+            if (!_enableAutoConversion)
+                return;
+
+            decimal basePrice = _lastCsvPrice;
+            if (basePrice <= 0)
+                return;
+
+            decimal factor;
+
+            if (_autoConvUseTimestamp)
+            {
+                var f = EnsureTimestampFactor(false);
+                if (!f.HasValue)
+                    return;
+                factor = f.Value;
+            }
+            else
+            {
+                // Usar precio del gráfico como ES en tiempo real para fijar un nuevo factor en esta ventana
+                var chartPrice = _lastEsPrice;
+                if (chartPrice <= 0)
+                    return;
+                factor = SafeDiv(chartPrice, basePrice);
+            }
+
+            _activeConvFactor = factor;
+            ApplyConversionWithFactor(factor);
+            RedrawChart();
+        }
+
+        private void OnAutoConvTimer(object? sender, System.Timers.ElapsedEventArgs e)
+        {
+            try
+            {
+                if (!_enableAutoConversion)
+                    return;
+
+                if (_autoConvUseTimestamp)
+                {
+                    // Timestamp mode: solo recalcular posiciones usando factor (que se refresca al expirar tolerancia internamente)
+                    RecalculateConversionPositions();
+                }
+                else
+                {
+                    // Period mode sin timestamp: al vencer el periodo recargamos CSV y luego fijamos NUEVO factor con precio actual y re-aplicamos
+                    LoadCsvSafe(); // mantiene factor anterior hasta que aquí se re-fija
+                    RecalculateConversionPositions();
+                }
+            }
+            catch { }
+        }
+
         private static List<StrikeRow> LoadCsv(
             string path,
             bool useLatestTimestamp,
             out string? error,
             bool enableConversion,
+            bool autoConversionEnabled,
             string? quotesCsvPath,
             decimal manualSpy,
             decimal manualEs,
             decimal priceStep,
             string callsColumnKey,
-            string putsColumnKey)
+            string putsColumnKey,
+            out decimal lastPrice,
+            out DateTime? lastTimestamp)
         {
             error = null;
+            lastPrice = 0m;
+            lastTimestamp = null;
             var result = new List<StrikeRow>();
 
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -1297,6 +1944,7 @@ namespace ATAS.Indicators.Technical
                 int idxTs = FindIndex(headers, "time"); // matches Timestamp
                 int idxSpy = FindIndex(headers, "spy");
                 int idxEs = FindIndex(headers, "es");
+                int idxPrice = FindIndex(headers, "price");
 
                 if (idxStrike <0 || idxCalls <0 || idxPuts <0)
                 {
@@ -1338,16 +1986,15 @@ namespace ATAS.Indicators.Technical
                 // Load external quotes if needed
                 Dictionary<string, decimal>? factorByTs = null;
                 string? quotesErr = null;
-                if (enableConversion && (idxSpy <0 || idxEs <0) && !string.IsNullOrWhiteSpace(quotesCsvPath) && File.Exists(quotesCsvPath))
+                if (enableConversion && !autoConversionEnabled && (idxSpy <0 || idxEs <0) && !string.IsNullOrWhiteSpace(quotesCsvPath) && File.Exists(quotesCsvPath))
                 {
                     factorByTs = LoadQuotesFactors(quotesCsvPath!, out quotesErr);
                     if (quotesErr != null && error == null) error = $"Quotes CSV: {quotesErr}";
                 }
 
-                decimal manualFactor = (enableConversion && manualSpy >0 && manualEs >0) ? SafeDiv(manualEs, manualSpy) :1m;
+                decimal manualFactor = (enableConversion && !autoConversionEnabled && manualSpy >0 && manualEs >0) ? SafeDiv(manualEs, manualSpy) :1m;
 
-                var agg = new Dictionary<decimal, (decimal calls, decimal puts, decimal spyStrike)>(
-                    enableConversion ? 1_000_000 : 1000); // optimizar para la mayoría de los casos (agregar más espacio para futuros strikes)
+                var agg = new Dictionary<decimal, (decimal calls, decimal puts, decimal spyStrike)>();
                 for (int i =1; i < lines.Length; i++)
                 {
                     var line = lines[i];
@@ -1368,9 +2015,17 @@ namespace ATAS.Indicators.Technical
                     if (!TryParseDecimal(cols[idxCalls], out var calls)) calls =0;
                     if (!TryParseDecimal(cols[idxPuts], out var puts)) puts =0;
 
-                    // determine conversion factor
+                    // Capturar último Price del CSV (si existe). Se usará para autoconversión
+                    if (idxPrice >= 0 && idxPrice < cols.Length && TryParseDecimal(cols[idxPrice], out var pr) && pr > 0)
+                    {
+                        lastPrice = pr;
+                        if (idxTs >= 0 && tsRaw != null && DateTime.TryParse(tsRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var tsdt))
+                            lastTimestamp = tsdt;
+                    }
+
+                    // determine conversion factor (solo si NO es autoconversión)
                     decimal factor =1m;
-                    if (enableConversion)
+                    if (!autoConversionEnabled && enableConversion)
                     {
                         if (idxSpy >=0 && idxEs >=0 && idxSpy < cols.Length && idxEs < cols.Length &&
                             TryParseDecimal(cols[idxSpy], out var spyVal) && TryParseDecimal(cols[idxEs], out var esVal) && spyVal >0)
@@ -1387,8 +2042,8 @@ namespace ATAS.Indicators.Technical
                         }
                     }
 
-                    var outStrike = enableConversion ? strikeSpy * factor : strikeSpy;
-                    if (priceStep >0)
+                    var outStrike = autoConversionEnabled ? strikeSpy : (enableConversion ? (strikeSpy * factor) : strikeSpy);
+                    if (!autoConversionEnabled && priceStep >0)
                         outStrike = RoundToStep(outStrike, priceStep);
 
                     if (!agg.TryGetValue(outStrike, out var tuple))
@@ -1396,6 +2051,10 @@ namespace ATAS.Indicators.Technical
                     else
                         agg[outStrike] = (tuple.calls + calls, tuple.puts + puts, tuple.spyStrike); // conservar SPY original
                 }
+
+                // Si usamos latest timestamp y lo encontramos, establecerlo si no se estableció antes
+                if (useLatestTimestamp && maxTs.HasValue && lastTimestamp == null)
+                    lastTimestamp = maxTs;
 
                 foreach (var kv in agg)
                 {
@@ -1569,6 +2228,104 @@ namespace ATAS.Indicators.Technical
             catch { return false; }
         }
 
+        private static bool TryParseDateTime(string? s, out DateTime value)
+        {
+            value = default;
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            return DateTime.TryParse(s.Trim('"', ' '), CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out value);
+        }
+
+        private static bool TryGetClosestEsByTimestamp(string path, DateTime target, int toleranceSec, out decimal es)
+        {
+            es = 0m;
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                    return false;
+
+                var lines = File.ReadAllLines(path);
+                if (lines.Length <= 1) return false;
+
+                var headers = SplitCsvLine(lines[0]);
+                int idxTs = FindIndex(headers, "time");
+                int idxEs = FindIndex(headers, "es");
+                if (idxTs < 0 || idxEs < 0) return false;
+
+                double bestDiff = double.MaxValue;
+                decimal bestEs = 0m;
+                for (int i = 1; i < lines.Length; i++)
+                {
+                    var cols = SplitCsvLine(lines[i]);
+                    if (cols.Length <= Math.Max(idxTs, idxEs)) continue;
+
+                    if (!TryParseDateTime(cols[idxTs], out var ts)) continue;
+                    if (!TryParseDecimal(cols[idxEs], out var esVal) || esVal <= 0) continue;
+
+                    var diff = Math.Abs((ts - target).TotalSeconds);
+                    if (diff < bestDiff)
+                    {
+                        bestDiff = diff;
+                        bestEs = esVal;
+                    }
+                }
+
+                if (bestDiff <= toleranceSec)
+                {
+                    es = bestEs;
+                    return es > 0;
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        // Obtiene/actualiza el factor sticky de autoconversión por timestamp.
+        // Si force=true o si expiró la ventana de tolerancia, recalcula el factor usando QuotesCsv y _lastCsvTimestamp.
+        private decimal? EnsureTimestampFactor(bool force)
+        {
+            if (!_autoConvUseTimestamp)
+                return null;
+
+            var nowUtc = DateTime.UtcNow;
+            lock (_sync)
+            {
+                bool expired = !_tsStickyAtUtc.HasValue || (nowUtc - _tsStickyAtUtc.Value).TotalSeconds >= _autoConvToleranceSec;
+                if (!force && _tsStickyFactor.HasValue && !expired)
+                {
+                    return _tsStickyFactor;
+                }
+            }
+
+            // Recalcular fuera del lock para evitar bloqueo en IO
+            if (!_lastCsvTimestamp.HasValue || _lastCsvPrice <= 0 || string.IsNullOrWhiteSpace(_quotesCsvPath) || !File.Exists(_quotesCsvPath))
+            {
+                lock (_sync)
+                {
+                    return _tsStickyFactor; // devolver el último si existe
+                }
+            }
+
+            if (TryGetClosestEsByTimestamp(_quotesCsvPath, _lastCsvTimestamp.Value, _autoConvToleranceSec, out var esVal) && esVal > 0)
+            {
+                var newFactor = SafeDiv(esVal, _lastCsvPrice);
+                if (newFactor > 0)
+                {
+                    lock (_sync)
+                    {
+                        _tsStickyFactor = newFactor;
+                        _tsStickyAtUtc = DateTime.UtcNow;
+                        return _tsStickyFactor;
+                    }
+                }
+            }
+
+            // Si no se pudo calcular uno nuevo, devolver el último válido
+            lock (_sync)
+            {
+                return _tsStickyFactor;
+            }
+        }
+
         private static string FormatCompact(decimal value)
         {
             var abs = Math.Abs(value);
@@ -1617,6 +2374,13 @@ namespace ATAS.Indicators.Technical
                     _hotkeyTimer.Dispose();
                     _hotkeyTimer = null;
                 }
+                if (_autoConvTimer != null)
+                {
+                    _autoConvTimer.Stop();
+                    _autoConvTimer.Elapsed -= OnAutoConvTimer;
+                    _autoConvTimer.Dispose();
+                    _autoConvTimer = null;
+                }
             }
             catch { }
             base.OnDispose();
@@ -1629,6 +2393,12 @@ namespace ATAS.Indicators.Technical
                 if (CheckAndConsumeHotkey())
                 {
                     CycleProfileType();
+                }
+
+                // Manual: Ctrl+U -> recalcula y aplica conversión inmediata
+                if (CheckAndConsumeManualConvHotkey())
+                {
+                    RecalculateConversionPositions();
                 }
             }
             catch
@@ -1664,10 +2434,23 @@ namespace ATAS.Indicators.Technical
             set { _requireCtrlModifier = value; }
         }
 
+        // NUEVO: Hotkey manual para actualizar conversión: Ctrl + U
+        private bool _enableManualConvHotkey = true;
+        [Display(GroupName = "10. Hotkeys", Name = "Enable manual conversion hotkey (Ctrl+U)", Order =40)]
+        public bool EnableManualConversionHotkey
+        {
+            get => _enableManualConvHotkey;
+            set { _enableManualConvHotkey = value; }
+        }
+
         // Estado anti-rebote
         private bool _hotkeyPrevDown;
         private DateTime _hotkeyLast = DateTime.MinValue;
         private const int HotkeyDebounceMs =250;
+
+        // Anti-rebote para Ctrl+U
+        private bool _manualHotkeyPrevDown;
+        private DateTime _manualHotkeyLast = DateTime.MinValue;
 
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
@@ -1719,6 +2502,42 @@ namespace ATAS.Indicators.Technical
             return fired;
         }
 
+        // NUEVO: Ctrl+U para refrescar conversión manualmente
+        private bool CheckAndConsumeManualConvHotkey()
+        {
+            if (!_enableManualConvHotkey)
+                return false;
+
+            const int VK_CONTROL = 0x11;
+            bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            if (!ctrlDown)
+            {
+                _manualHotkeyPrevDown = false;
+                return false;
+            }
+
+            int vKey = ResolveVkFromChar('U');
+            if (vKey == 0)
+                return false;
+
+            bool keyDown = (GetAsyncKeyState(vKey) & 0x8000) != 0;
+            bool comboDown = ctrlDown && keyDown;
+
+            var now = DateTime.UtcNow;
+            bool fired = false;
+            if (comboDown && !_manualHotkeyPrevDown)
+            {
+                if ((now - _manualHotkeyLast).TotalMilliseconds >= HotkeyDebounceMs)
+                {
+                    fired = true;
+                    _manualHotkeyLast = now;
+                }
+            }
+
+            _manualHotkeyPrevDown = comboDown;
+            return fired;
+        }
+
         private void CycleProfileType()
         {
             var next = _profileType;
@@ -1726,7 +2545,8 @@ namespace ATAS.Indicators.Technical
             {
                 case ProfileDataType.Cash: next = ProfileDataType.IV; break;
                 case ProfileDataType.IV: next = ProfileDataType.Delta; break;
-                case ProfileDataType.Delta: next = ProfileDataType.Cash; break;
+                case ProfileDataType.Delta: next = ProfileDataType.Gex; break;
+                case ProfileDataType.Gex: next = ProfileDataType.Cash; break;
                 case ProfileDataType.Custom: next = ProfileDataType.Cash; break;
                 default: next = ProfileDataType.Cash; break;
             }
