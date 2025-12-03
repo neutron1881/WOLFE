@@ -14,7 +14,7 @@ using OFT.Rendering.Tools;
 
 namespace ATAS.Indicators.Technical
 {
-    [DisplayName("CashProfile")]
+    [DisplayName("CashProfile NewFlow")]
     public class CashProfile : Indicator
     {
         private class StrikeRow
@@ -25,6 +25,17 @@ namespace ATAS.Indicators.Technical
             public decimal StrikeSpy { get; set; }
             public decimal Calls { get; set; }
             public decimal Puts { get; set; }
+        }
+
+        // NUEVO: Estructura para Big Trades persistentes
+        private class PersistentBigTrade
+        {
+            public decimal StrikeSpy { get; set; }    // Strike original SPY
+            public decimal Strike { get; set; }        // Strike final (ES o SPY)
+            public decimal Value { get; set; }         // Valor del big trade
+            public bool IsCall { get; set; }           // true = Call, false = Put
+            public DateTime DetectionTime { get; set; } // Momento de detección
+            public int Bar { get; set; }               // Barra donde se detectó
         }
 
         private readonly object _sync = new();
@@ -38,6 +49,9 @@ namespace ATAS.Indicators.Technical
         // Guardar valores previos por strike para dibujar marcadores
         private Dictionary<decimal, (decimal calls, decimal puts)> _prevBySpy = new();
         private Dictionary<decimal, (decimal calls, decimal puts)> _prevByStrike = new();
+
+        // NUEVO: Big Trades persistentes - lista que se conserva durante la sesión
+        private List<PersistentBigTrade> _persistentBigTrades = new();
 
         // Base rows para auto-conversión (StrikeSpy + valores)
         private readonly List<StrikeRow> _baseRows = new();
@@ -785,7 +799,7 @@ namespace ATAS.Indicators.Technical
         public PrevMarkerMode PreviousMarkerMode
         {
             get => _prevMarkerMode;
-            set { _prevMarkerMode = value; RedrawChart(); }
+            set { _prevMarkerMode = value; }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "Marker size (px)", Order =30)]
@@ -983,6 +997,126 @@ namespace ATAS.Indicators.Technical
         {
             get => _bigTradeFontSize;
             set { _bigTradeFontSize = Math.Clamp(value, 6, 60); RedrawChart(); }
+        }
+
+        // 13. Persistent Big Trades (nuevas opciones)
+        private bool _showPersistentBigTrades = false;
+        private int _persistentBigTradeBaseRadius = 8;
+        private int _persistentBigTradeMaxRadius = 50;
+        private decimal _persistentBigTradeRadiusPerUnit = 0.01m;
+        private int _persistentBigTradeOffsetPx = 15;
+        private Color _persistentBigTradeCallsColor = Color.LimeGreen;
+        private Color _persistentBigTradePutsColor = Color.Salmon;
+        private bool _persistentBigTradeShowValue = true;
+        private Color _persistentBigTradeTextColor = Color.White;
+        private int _persistentBigTradeFontSize = 9;
+        private int _persistentBigTradeOpacity = 160;
+        private bool _persistentBigTradeShowTime = true;
+        private Color _persistentBigTradeTimeColor = Color.LightGray;
+        private int _persistentBigTradeTimeFontSize = 7;
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Show persistent big trades", Order = 10)]
+        public bool ShowPersistentBigTrades
+        {
+            get => _showPersistentBigTrades;
+            set { _showPersistentBigTrades = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Base radius (px)", Order = 20)]
+        [Range(2, 200)]
+        public int PersistentBigTradeBaseRadius
+        {
+            get => _persistentBigTradeBaseRadius;
+            set { _persistentBigTradeBaseRadius = Math.Clamp(value, 2, 200); RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Max radius (px)", Order = 30)]
+        [Range(2, 400)]
+        public int PersistentBigTradeMaxRadius
+        {
+            get => _persistentBigTradeMaxRadius;
+            set { _persistentBigTradeMaxRadius = Math.Clamp(value, 2, 400); RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Radius per unit", Order = 40)]
+        public decimal PersistentBigTradeRadiusPerUnit
+        {
+            get => _persistentBigTradeRadiusPerUnit;
+            set { _persistentBigTradeRadiusPerUnit = value <= 0 ? 0.0001m : value; }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Offset from bar (px)", Order = 50)]
+        [Range(0, 500)]
+        public int PersistentBigTradeOffsetPx
+        {
+            get => _persistentBigTradeOffsetPx;
+            set { _persistentBigTradeOffsetPx = Math.Clamp(value, 0, 500); RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Calls marker color", Order = 60)]
+        public Color PersistentBigTradeCallsColor
+        {
+            get => _persistentBigTradeCallsColor;
+            set { _persistentBigTradeCallsColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Puts marker color", Order = 70)]
+        public Color PersistentBigTradePutsColor
+        {
+            get => _persistentBigTradePutsColor;
+            set { _persistentBigTradePutsColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Show value inside", Order = 80)]
+        public bool PersistentBigTradeShowValue
+        {
+            get => _persistentBigTradeShowValue;
+            set { _persistentBigTradeShowValue = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Value text color", Order = 90)]
+        public Color PersistentBigTradeTextColor
+        {
+            get => _persistentBigTradeTextColor;
+            set { _persistentBigTradeTextColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Value font size", Order = 100)]
+        [Range(6, 60)]
+        public int PersistentBigTradeFontSize
+        {
+            get => _persistentBigTradeFontSize;
+            set { _persistentBigTradeFontSize = Math.Clamp(value, 6, 60); RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Circle opacity", Order = 110)]
+        [Range(0, 255)]
+        public int PersistentBigTradeOpacity
+        {
+            get => _persistentBigTradeOpacity;
+            set { _persistentBigTradeOpacity = Math.Clamp(value, 0, 255); RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Show detection time", Order = 120)]
+        public bool PersistentBigTradeShowTime
+        {
+            get => _persistentBigTradeShowTime;
+            set { _persistentBigTradeShowTime = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Time text color", Order = 130)]
+        public Color PersistentBigTradeTimeColor
+        {
+            get => _persistentBigTradeTimeColor;
+            set { _persistentBigTradeTimeColor = value; RedrawChart(); }
+        }
+
+        [Display(GroupName = "13. Persistent Big Trades", Name = "Time font size", Order = 140)]
+        [Range(6, 20)]
+        public int PersistentBigTradeTimeFontSize
+        {
+            get => _persistentBigTradeTimeFontSize;
+            set { _persistentBigTradeTimeFontSize = Math.Clamp(value, 6, 20); RedrawChart(); }
         }
 
         public CashProfile()
@@ -1325,6 +1459,55 @@ namespace ATAS.Indicators.Technical
                     }
                 }
 
+                // NUEVO: Persistent Big Trades - detectar y almacenar
+                if (_showPersistentBigTrades && _showBigTradeMarkers)
+                {
+                    (decimal prevCalls, decimal prevPuts) prevVals;
+                    if (!prevBySpy.TryGetValue(row.StrikeSpy, out prevVals))
+                        prevByStrike.TryGetValue(row.Strike, out prevVals);
+
+                    decimal callsDiff = _profileType == ProfileDataType.Gex
+                        ? Math.Abs(row.Calls) - Math.Abs(prevVals.prevCalls)
+                        : (row.Calls - prevVals.prevCalls);
+                    decimal putsDiff = _profileType == ProfileDataType.Gex
+                        ? Math.Abs(row.Puts) - Math.Abs(prevVals.prevPuts)
+                        : (row.Puts - prevVals.prevPuts);
+
+                    // Detectar Call Big Trade y almacenar
+                    if (callsDiff >= _bigTradeThreshold && callsDiff > 0)
+                    {
+                        lock (_sync)
+                        {
+                            _persistentBigTrades.Add(new PersistentBigTrade
+                            {
+                                StrikeSpy = row.StrikeSpy,
+                                Strike = row.Strike,
+                                Value = callsDiff,
+                                IsCall = true,
+                                DetectionTime = DateTime.Now,
+                                Bar = CurrentBar
+                            });
+                        }
+                    }
+
+                    // Detectar Put Big Trade y almacenar
+                    if (putsDiff >= _bigTradeThreshold && putsDiff > 0)
+                    {
+                        lock (_sync)
+                        {
+                            _persistentBigTrades.Add(new PersistentBigTrade
+                            {
+                                StrikeSpy = row.StrikeSpy,
+                                Strike = row.Strike,
+                                Value = putsDiff,
+                                IsCall = false,
+                                DetectionTime = DateTime.Now,
+                                Bar = CurrentBar
+                            });
+                        }
+                    }
+                }
+
                 // Values and strikes near bars
                 if (_showValues)
                 {
@@ -1371,6 +1554,67 @@ namespace ATAS.Indicators.Technical
 
             if (_showTopSummary)
                 DrawTopSummary(context, xCenter, snapshot);
+
+            // NUEVO: Dibujar Persistent Big Trades en el gráfico de precios (en coordenadas de strike)
+            if (_showPersistentBigTrades && _persistentBigTrades.Count > 0)
+            {
+                lock (_sync)
+                {
+                    foreach (var pbt in _persistentBigTrades)
+                    {
+                        // Verificar que esté dentro del rango visible
+                        if (pbt.Bar < FirstVisibleBarNumber || pbt.Bar > LastVisibleBarNumber)
+                            continue;
+
+                        // Obtener posición X del bar donde se detectó el big trade
+                        int xBar = ChartInfo.PriceChartContainer.GetXByBar(pbt.Bar, false);
+                        
+                        // Obtener posición Y del strike donde ocurrió
+                        int yStrike = ChartInfo.PriceChartContainer.GetYByPrice(pbt.Strike, false);
+
+                        // Calcular radio del círculo en función del valor
+                        int radius = _persistentBigTradeBaseRadius + (int)Math.Round((double)((pbt.Value - _bigTradeThreshold) * _persistentBigTradeRadiusPerUnit));
+                        radius = Math.Clamp(radius, _persistentBigTradeBaseRadius, _persistentBigTradeMaxRadius);
+
+                        // Color según Call/Put
+                        Color markerColor = pbt.IsCall ? _persistentBigTradeCallsColor : _persistentBigTradePutsColor;
+                        var ellipseRect = new Rectangle(xBar - radius, yStrike - radius, radius * 2, radius * 2);
+
+                        // Dibujar el círculo del big trade
+                        try 
+                        { 
+                            context.FillEllipse(Color.FromArgb(_persistentBigTradeOpacity, markerColor), ellipseRect);
+                            context.DrawEllipse(new RenderPen(markerColor, 2), ellipseRect);
+                        }
+                        catch 
+                        { 
+                            context.FillRectangle(Color.FromArgb(_persistentBigTradeOpacity, markerColor), ellipseRect);
+                        }
+
+                        // Dibujar valor dentro del círculo
+                        if (_persistentBigTradeShowValue)
+                        {
+                            var fontBt = new RenderFont("Arial", _persistentBigTradeFontSize);
+                            string txt = FormatCompact(pbt.Value);
+                            int tw = EstimateTextWidth(txt, fontBt);
+                            int tx = xBar - tw / 2;
+                            int ty = yStrike - (_persistentBigTradeFontSize / 2);
+                            context.DrawString(txt, fontBt, _persistentBigTradeTextColor, tx, ty);
+                        }
+
+                        // Dibujar hora de detección debajo del círculo
+                        if (_persistentBigTradeShowTime)
+                        {
+                            var fontTime = new RenderFont("Arial", _persistentBigTradeTimeFontSize);
+                            string timeStr = pbt.DetectionTime.ToString("HH:mm");
+                            int twd = EstimateTextWidth(timeStr, fontTime);
+                            int txd = xBar - twd / 2;
+                            int tyd = yStrike + radius + 8;
+                            context.DrawString(timeStr, fontTime, _persistentBigTradeTimeColor, txd, tyd);
+                        }
+                    }
+                }
+            }
 
             // Max lines
             if (snapshot.Count >0)
@@ -2220,7 +2464,7 @@ namespace ATAS.Indicators.Technical
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     var cols = SplitCsvLine(line);
                     if (cols.Length <= Math.Max(idxSpy, idxEs)) continue;
-                    if (TryParseDecimal(cols[idxSpy], out var s) && TryParseDecimal(cols[idxEs], out var e))
+                    if (TryParseDecimal(cols[idxSpy], out var s) && TryParseDecimal(cols[idxEs], out var e) && s >0)
                     { spy = s; es = e; return true; }
                 }
                 return false;
