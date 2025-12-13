@@ -183,6 +183,23 @@ namespace ATAS.Indicators.Technical
             Color = System.Windows.Media.Colors.MediumSeaGreen 
         };
 
+        // Series de incrementos por barra
+        private readonly ValueDataSeries _callFlowDeltaSeries = new("CallFlowΔ", "Call Money Flow Δ")
+        {
+            VisualType = VisualMode.Histogram,
+            Color = System.Windows.Media.Colors.LightSkyBlue
+        };
+        private readonly ValueDataSeries _putFlowDeltaSeries = new("PutFlowΔ", "Put Money Flow Δ")
+        {
+            VisualType = VisualMode.Histogram,
+            Color = System.Windows.Media.Colors.Salmon
+        };
+        private readonly ValueDataSeries _cashNetDeltaSeries = new("CashNetΔ", "Cash Net Δ")
+        {
+            VisualType = VisualMode.Histogram,
+            Color = System.Windows.Media.Colors.LightGreen
+        };
+
         // Series de análisis Call/Put Flow
         private readonly ValueDataSeries _flowAnalysisSeries = new("FlowAnalysis", "Call/Put Analysis")
         {
@@ -328,23 +345,6 @@ namespace ATAS.Indicators.Technical
         public bool ShowBigTradeMarkers
         {
             get => _showBigTradeMarkers;
-            set { _showBigTradeMarkers = value; RecalculateValues(); }
-        }
-
-        [Display(GroupName = "2. Big Trade Filters", Name = "Call Money Flow Threshold (M)", Order = 20, Description = "En millones (ej: 1 = 1M)")]
-        [Range(0.01, 100)]
-        public decimal CallMoneyFlowThreshold
-        {
-            get => _callMoneyFlowThreshold;
-            set { _callMoneyFlowThreshold = Math.Clamp(value, 0.01m, 100m); RecalculateValues(); }
-        }
-
-        [Display(GroupName = "2. Big Trade Filters", Name = "Put Money Flow Threshold (M)", Order = 30, Description = "En millones (ej: 1 = 1M)")]
-        [Range(0.01, 100)]
-        public decimal PutMoneyFlowThreshold
-        {
-            get => _putMoneyFlowThreshold;
-            set { _putMoneyFlowThreshold = Math.Clamp(value, 0.01m, 100m); RecalculateValues(); }
         }
 
         [Display(GroupName = "2. Big Trade Filters", Name = "Cash Net Threshold (M)", Order = 40, Description = "En millones (ej: 1 = 1M)")]
@@ -875,9 +875,10 @@ namespace ATAS.Indicators.Technical
                             decimal putThreshold = _putMoneyFlowThreshold * 1_000_000m;
                             decimal netThreshold = _cashNetThreshold * 1_000_000m;
 
-                            bool hasCallTrade = Math.Abs(callDiff) >= callThreshold && callDiff != 0;
-                            bool hasPutTrade = Math.Abs(putDiff) >= putThreshold && putDiff != 0;
-                            bool hasNetTrade = Math.Abs(netDiff) >= netThreshold && netDiff != 0;
+                            // Solo considerar incrementos positivos de flujo (no reducciones)
+                            bool hasCallTrade = callDiff >= callThreshold;
+                            bool hasPutTrade = putDiff >= putThreshold;
+                            bool hasNetTrade = netDiff >= netThreshold;
 
                             if (hasCallTrade || hasPutTrade || hasNetTrade)
                             {
