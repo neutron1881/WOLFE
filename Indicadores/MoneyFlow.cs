@@ -345,14 +345,43 @@ namespace ATAS.Indicators.Technical
         public bool ShowBigTradeMarkers
         {
             get => _showBigTradeMarkers;
+            set { _showBigTradeMarkers = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "Call Money Flow Threshold (M)", Order = 20, Description = "En millones (ej: 1 = 1M)")]
+        public decimal CallMoneyFlowThreshold
+        {
+            get => _callMoneyFlowThreshold;
+            set
+            {
+                _callMoneyFlowThreshold = value;
+                _bigTrades.Clear();
+                RecalculateValues();
+            }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "Put Money Flow Threshold (M)", Order = 30, Description = "En millones (ej: 1 = 1M)")]
+        public decimal PutMoneyFlowThreshold
+        {
+            get => _putMoneyFlowThreshold;
+            set
+            {
+                _putMoneyFlowThreshold = value;
+                _bigTrades.Clear();
+                RecalculateValues();
+            }
         }
 
         [Display(GroupName = "2. Big Trade Filters", Name = "Cash Net Threshold (M)", Order = 40, Description = "En millones (ej: 1 = 1M)")]
-        [Range(0.01, 100)]
         public decimal CashNetThreshold
         {
             get => _cashNetThreshold;
-            set { _cashNetThreshold = Math.Clamp(value, 0.01m, 100m); RecalculateValues(); }
+            set
+            {
+                _cashNetThreshold = value;
+                _bigTrades.Clear();
+                RecalculateValues();
+            }
         }
 
         [Display(GroupName = "2. Big Trade Filters", Name = "Base Radius (px)", Order = 50)]
@@ -542,48 +571,33 @@ namespace ATAS.Indicators.Technical
         private bool _showBullishSignals = true;
         private bool _showBearishSignals = true;
 
-        [Display(GroupName = "7. Signal Settings", Name = "Consecutive Bars for Signal", Order = 10, Description = "Número de velas consecutivas para generar señal")]
-        [Range(2, 10)]
-        public int ConsecutiveBarsForSignal
+        // Ratio alert backing fields
+        private decimal _ratioUpperAlert = 1.2m;
+        private decimal _ratioLowerAlert = 0.8m;
+
+        public enum InfoPanelAlignment
         {
-            get => _consecutiveBarsForSignal;
-            set { _consecutiveBarsForSignal = Math.Clamp(value, 2, 10); RecalculateValues(); }
+            [Display(Name = "Left")] Left,
+            [Display(Name = "Center")] Center,
+            [Display(Name = "Right")] Right
         }
 
-        [Display(GroupName = "7. Signal Settings", Name = "Show Bullish Signals", Order = 20, Description = "Mostrar señales alcistas")]
-        public bool ShowBullishSignals
+        // Info Panel settings
+        private bool _showInfoPanel = true;
+        private InfoPanelAlignment _infoPanelAlign = InfoPanelAlignment.Right;
+
+        [Display(GroupName = "4. Flow Analysis", Name = "Show Info Panel", Order = 5, Description = "Mostrar panel informativo superior en el gráfico de precio")]
+        public bool ShowInfoPanel
         {
-            get => _showBullishSignals;
-            set { _showBullishSignals = value; RedrawChart(); }
+            get => _showInfoPanel;
+            set { _showInfoPanel = value; RedrawChart(); }
         }
 
-        [Display(GroupName = "7. Signal Settings", Name = "Show Bearish Signals", Order = 30, Description = "Mostrar señales bajistas")]
-        public bool ShowBearishSignals
+        [Display(GroupName = "4. Flow Analysis", Name = "Info Panel Alignment", Order = 6, Description = "Alineación del panel (Izq/Centro/Der)")]
+        public InfoPanelAlignment InfoPanelAlign
         {
-            get => _showBearishSignals;
-            set { _showBearishSignals = value; RedrawChart(); }
-        }
-
-        [Display(GroupName = "7. Signal Settings", Name = "Bullish Signal Color", Order = 40, Description = "Color de la señal alcista")]
-        public Color BullishSignalColor
-        {
-            get => _bullishSignalColor;
-            set { _bullishSignalColor = value; RedrawChart(); }
-        }
-
-        [Display(GroupName = "7. Signal Settings", Name = "Bearish Signal Color", Order = 50, Description = "Color de la señal bajista")]
-        public Color BearishSignalColor
-        {
-            get => _bearishSignalColor;
-            set { _bearishSignalColor = value; RedrawChart(); }
-        }
-
-        [Display(GroupName = "7. Signal Settings", Name = "Signal Marker Size", Order = 60, Description = "Tamaño del marcador de señal (px)")]
-        [Range(5, 50)]
-        public int SignalMarkerSize
-        {
-            get => _signalMarkerSize;
-            set { _signalMarkerSize = Math.Clamp(value, 5, 50); RedrawChart(); }
+            get => _infoPanelAlign;
+            set { _infoPanelAlign = value; RedrawChart(); }
         }
 
         public MoneyFlow() : base(true)
@@ -594,6 +608,9 @@ namespace ATAS.Indicators.Technical
             DataSeries[0] = _callFlowSeries;
             DataSeries.Add(_putFlowSeries);
             DataSeries.Add(_cashNetSeries);
+            DataSeries.Add(_callFlowDeltaSeries);
+            DataSeries.Add(_putFlowDeltaSeries);
+            DataSeries.Add(_cashNetDeltaSeries);
             DataSeries.Add(_flowAnalysisSeries);
             DataSeries.Add(_flowDivergenceSeries);
             DataSeries.Add(_sentimentSeries);
@@ -662,8 +679,14 @@ namespace ATAS.Indicators.Technical
 
             // Dibujar señales de compra/venta en el gráfico de precios
             DrawSignalsOnPriceChart(context);
-        }
 
+            // Dibujar panel informativo superior
+            if (_showInfoPanel)
+            {
+                DrawInfoPanel(context);
+            }
+        }
+        
         private void DrawSignalsOnPriceChart(RenderContext context)
         {
             if (ChartInfo?.PriceChartContainer == null)
@@ -796,6 +819,106 @@ namespace ATAS.Indicators.Technical
             }
         }
 
+        private void DrawInfoPanel(RenderContext context)
+        {
+            if (ChartInfo?.PriceChartContainer == null)
+                return;
+
+            int lastBar = LastVisibleBarNumber;
+            if (lastBar < 0)
+                return;
+
+            // Últimos valores de las series
+            decimal sentiment = _sentimentSeries.Count > lastBar ? _sentimentSeries[lastBar] : 0m;
+            decimal momentum = _momentumSeries.Count > lastBar ? _momentumSeries[lastBar] : 0m;
+            decimal callFlow = _callFlowSeries.Count > lastBar ? _callFlowSeries[lastBar] : 0m;
+            decimal putFlow = _putFlowSeries.Count > lastBar ? _putFlowSeries[lastBar] : 0m;
+            decimal cashNet = _cashNetSeries.Count > lastBar ? _cashNetSeries[lastBar] : 0m;
+
+            // Cálculos adicionales
+            decimal totalFlow = callFlow + putFlow;
+            decimal callPct = totalFlow != 0 ? callFlow / totalFlow : 0m;
+            decimal putPct = totalFlow != 0 ? putFlow / totalFlow : 0m;
+
+            // Ratio Serie1/Serie2 (Call/Put)
+            decimal ratio = putFlow != 0 ? callFlow / putFlow : 0m;
+
+            // Cambio de CashNet respecto a la barra anterior visible
+            decimal cashNetChange = 0m;
+            if (lastBar > FirstVisibleBarNumber)
+            {
+                int prevBar = lastBar - 1;
+                decimal prevCash = _cashNetSeries.Count > prevBar ? _cashNetSeries[prevBar] : 0m;
+                cashNetChange = cashNet - prevCash;
+            }
+
+            // Texto principal (sin ratio coloreado aún)
+            string baseText =
+                $"Sent {sentiment:F2}    |    Mom {momentum:F2}    |    Call {FormatCompactRounded(callFlow)} ({callPct:P0})    " +
+                $"Put {FormatCompactRounded(putFlow)} ({putPct:P0})    |    Net {FormatCompactRounded(cashNet)}    ΔNet {FormatCompactRounded(cashNetChange)}";
+
+            // Indicadores de alerta por ratio
+            bool highAlert = ratio >= _ratioUpperAlert && _ratioUpperAlert > 0;
+            bool lowAlert = ratio <= _ratioLowerAlert && _ratioLowerAlert > 0;
+
+            string alertText = string.Empty;
+            if (highAlert)
+                alertText += "    [R↑]";
+            if (lowAlert)
+                alertText += "    [R↓]";
+
+            string text = baseText + alertText;
+
+            var font = new RenderFont("Segoe UI", 10, FontStyle.Regular);
+            int textWidth = EstimateTextWidth(text, font);
+            int paddingH = 10;
+            int panelWidth = textWidth + paddingH * 2;
+            int panelHeight = 22;
+
+            var priceRegion = ChartInfo.PriceChartContainer.Region;
+
+            int x;
+            switch (_infoPanelAlign)
+            {
+                case InfoPanelAlignment.Left:
+                    x = priceRegion.Left + 10;
+                    break;
+                case InfoPanelAlignment.Center:
+                    x = priceRegion.Left + (priceRegion.Width - panelWidth) / 2;
+                    break;
+                case InfoPanelAlignment.Right:
+                default:
+                    x = priceRegion.Right - panelWidth - 10;
+                    break;
+            }
+
+            int y = priceRegion.Top + 8;
+
+            var rect = new System.Drawing.Rectangle(x, y, panelWidth, panelHeight);
+
+            // Fondo semi-transparente minimalista
+            var backColor = System.Drawing.Color.FromArgb(180, 20, 20, 20);
+            var borderColor = System.Drawing.Color.FromArgb(220, 80, 80, 80);
+            var textColor = System.Drawing.Color.White;
+
+            context.FillRectangle(backColor, rect);
+            context.DrawRectangle(new RenderPen(borderColor, 1), rect);
+
+            int textX = x + paddingH;
+            int textY = y + (panelHeight - (int)font.Size) / 2;
+
+            // Dibujar texto base
+            context.DrawString(text, font, textColor, textX, textY);
+
+            // Dibujar ratio al final del panel, destacado y coloreado
+            string ratioLabel = $"R {ratio:F2}";
+            var ratioColor = ratio >= 1m ? System.Drawing.Color.LimeGreen : System.Drawing.Color.IndianRed;
+            int ratioWidth = EstimateTextWidth(ratioLabel, font);
+            int ratioX = rect.Right - ratioWidth - paddingH;
+
+            context.DrawString(ratioLabel, font, ratioColor, ratioX, textY);
+        }
+
         private static int EstimateTextWidth(string text, RenderFont font)
         {
             if (string.IsNullOrEmpty(text)) return 0;
@@ -840,6 +963,23 @@ namespace ATAS.Indicators.Technical
                 _callFlowSeries[bar] = closestData.CallMoneyFlow;
                 _putFlowSeries[bar] = closestData.PutMoneyFlow;
                 _cashNetSeries[bar] = closestData.CashNet;
+
+                // Incrementos por barra (delta respecto a la barra anterior)
+                if (bar > 0)
+                {
+                    var prevCandle = GetCandle(bar - 1);
+                    if (prevCandle != null)
+                    {
+                        var prevBarTimeInCsvZoneForDelta = prevCandle.Time.AddHours(instrumentTimeZoneOffset).AddHours(_gmtOffset);
+                        var prevDataForDelta = FindClosestDataByTime(prevBarTimeInCsvZoneForDelta);
+                        if (prevDataForDelta != null)
+                        {
+                            _callFlowDeltaSeries[bar] = closestData.CallMoneyFlow - prevDataForDelta.CallMoneyFlow;
+                            _putFlowDeltaSeries[bar] = closestData.PutMoneyFlow - prevDataForDelta.PutMoneyFlow;
+                            _cashNetDeltaSeries[bar] = closestData.CashNet - prevDataForDelta.CashNet;
+                        }
+                    }
+                }
 
                 // Análisis Call/Put Flow
                 decimal callFlow = closestData.CallMoneyFlow;
