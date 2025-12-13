@@ -16,6 +16,122 @@ namespace ATAS.Indicators.Technical
     [Category("NewFlow")]
     public class MoneyFlow : Indicator
     {
+        public enum ColumnType
+        {
+            [Display(Name = "None")]
+            None,
+            [Display(Name = "Last Price")]
+            LastPrice,
+            [Display(Name = "Call Money Flow")]
+            CallMoneyFlow,
+            [Display(Name = "Put Money Flow")]
+            PutMoneyFlow,
+            [Display(Name = "Money Flow Ratio")]
+            MfRatio,
+            [Display(Name = "Cash Net")]
+            CashNet,
+            [Display(Name = "Call Delta Flow")]
+            CallDeltaFlow,
+            [Display(Name = "Put Delta Flow")]
+            PutDeltaFlow,
+            [Display(Name = "Delta Flow Ratio")]
+            DfRatio,
+            [Display(Name = "Delta Call")]
+            DeltaCall,
+            [Display(Name = "Delta Put")]
+            DeltaPut,
+            [Display(Name = "Delta Net")]
+            DeltaNet,
+            [Display(Name = "Call IV Flow")]
+            CallIvFlow,
+            [Display(Name = "Put IV Flow")]
+            PutIvFlow,
+            [Display(Name = "IV Flow Ratio")]
+            IvfRatio,
+            [Display(Name = "Call OTM Impact")]
+            CallOtmImpact,
+            [Display(Name = "Put OTM Impact")]
+            PutOtmImpact,
+            [Display(Name = "Call ITM Impact")]
+            CallItmImpact,
+            [Display(Name = "Put ITM Impact")]
+            PutItmImpact,
+            [Display(Name = "Call GEX")]
+            CallGex,
+            [Display(Name = "Put GEX")]
+            PutGex,
+            [Display(Name = "Net GEX")]
+            NetGex,
+            [Display(Name = "Call Vanna Flow")]
+            CallVannaFlow,
+            [Display(Name = "Put Vanna Flow")]
+            PutVannaFlow,
+            [Display(Name = "Vanna Ratio")]
+            VannaRatio,
+            [Display(Name = "Call Charm")]
+            CallCharm,
+            [Display(Name = "Put Charm")]
+            PutCharm,
+            [Display(Name = "Charm Pressure")]
+            CharmPressure,
+            [Display(Name = "Call IV Flow ITM")]
+            CallIvFlowItm,
+            [Display(Name = "Put IV Flow ITM")]
+            PutIvFlowItm,
+            [Display(Name = "Call IV Flow OTM")]
+            CallIvFlowOtm,
+            [Display(Name = "Put IV Flow OTM")]
+            PutIvFlowOtm,
+            [Display(Name = "IV Net")]
+            IvNet,
+            [Display(Name = "Call Vol Imbalance")]
+            CallVolImbalance,
+            [Display(Name = "Put Vol Imbalance")]
+            PutVolImbalance,
+            [Display(Name = "Vol Imbalance Ratio")]
+            VolImbalanceRatio,
+            [Display(Name = "Call Smart Money")]
+            CallSmartMoney,
+            [Display(Name = "Put Smart Money")]
+            PutSmartMoney,
+            [Display(Name = "Smart Money Ratio")]
+            SmartMoneyRatio,
+            [Display(Name = "Call Hedge Pressure")]
+            CallHedgePressure,
+            [Display(Name = "Put Hedge Pressure")]
+            PutHedgePressure,
+            [Display(Name = "Net Hedge Pressure")]
+            NetHedgePressure,
+            [Display(Name = "Skew Pressure")]
+            SkewPressure,
+            [Display(Name = "Skew Intensity")]
+            SkewIntensity,
+            [Display(Name = "Premium Flow")]
+            PremiumFlow,
+            [Display(Name = "Call Premium")]
+            CallPremium,
+            [Display(Name = "Put Premium")]
+            PutPremium,
+            [Display(Name = "Volume")]
+            Volume,
+            [Display(Name = "Call Volume")]
+            CallVolume,
+            [Display(Name = "Put Volume")]
+            PutVolume,
+            [Display(Name = "Open Interest")]
+            OpenInterest,
+            [Display(Name = "Call Open Interest")]
+            CallOpenInterest,
+            [Display(Name = "Put Open Interest")]
+            PutOpenInterest,
+            [Display(Name = "Implied Volatility")]
+            ImpliedVolatility,
+            [Display(Name = "Call IV")]
+            CallIv,
+            [Display(Name = "Put IV")]
+            PutIv
+        }
+
         private class MoneyFlowData
         {
             public DateTime Timestamp { get; set; }
@@ -23,6 +139,18 @@ namespace ATAS.Indicators.Technical
             public decimal CallMoneyFlow { get; set; }
             public decimal PutMoneyFlow { get; set; }
             public decimal CashNet { get; set; }
+            public decimal CallDeltaFlow { get; set; }
+            public decimal PutDeltaFlow { get; set; }
+            public decimal CallIvFlow { get; set; }
+            public decimal PutIvFlow { get; set; }
+            public decimal CallVannaFlow { get; set; }
+            public decimal PutVannaFlow { get; set; }
+            public decimal CallCharm { get; set; }
+            public decimal PutCharm { get; set; }
+            public decimal CallHedgePressure { get; set; }
+            public decimal PutHedgePressure { get; set; }
+            public decimal CallSmartMoney { get; set; }
+            public decimal PutSmartMoney { get; set; }
         }
 
         private readonly List<MoneyFlowData> _data = new();
@@ -94,6 +222,9 @@ namespace ATAS.Indicators.Technical
         private decimal _priceMultiplier = 1m;
         private int _gmtOffset = 0;
         private int _timeToleranceMinutes = 10;
+        private ColumnType _series1Column = ColumnType.CallMoneyFlow;
+        private ColumnType _series2Column = ColumnType.PutMoneyFlow;
+        private ColumnType _series3Column = ColumnType.CashNet;
 
         [Display(GroupName = "0. CSV File", Name = "CSV File Name", Order = 5, Description = "Nombre del archivo CSV (ej: data.csv, UnifiedInstrument.csv)")]
         public string CsvFileName
@@ -153,6 +284,27 @@ namespace ATAS.Indicators.Technical
         {
             get => _refreshIntervalSeconds;
             set { _refreshIntervalSeconds = Math.Clamp(value, 1, 300); }
+        }
+
+        [Display(GroupName = "1. Series Selection", Name = "Series 1 Column", Order = 10, Description = "Columna CSV para la serie 1")]
+        public ColumnType Series1Column
+        {
+            get => _series1Column;
+            set { _series1Column = value; LoadMoneyFlowData(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "1. Series Selection", Name = "Series 2 Column", Order = 20, Description = "Columna CSV para la serie 2")]
+        public ColumnType Series2Column
+        {
+            get => _series2Column;
+            set { _series2Column = value; LoadMoneyFlowData(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "1. Series Selection", Name = "Series 3 Column", Order = 30, Description = "Columna CSV para la serie 3")]
+        public ColumnType Series3Column
+        {
+            get => _series3Column;
+            set { _series3Column = value; LoadMoneyFlowData(); RecalculateValues(); }
         }
 
         // Big Trade settings
@@ -880,30 +1032,38 @@ namespace ATAS.Indicators.Technical
                 }
 
                 var headers = SplitCsvLine(lines[0]);
-                int idxLastPrice = FindIndex(headers, "last_price");
-                int idxCallFlow = FindIndex(headers, "call_money_flow");
-                int idxPutFlow = FindIndex(headers, "put_money_flow");
-                int idxCashNet = FindIndex(headers, "cash_net");
+                
+                // Buscar índices de tiempo y columnas seleccionadas
                 int idxTime = FindIndex(headers, "iso_time");
                 if (idxTime < 0)
                     idxTime = FindIndex(headers, "timestamp_ms");
 
-                if (idxLastPrice < 0 || idxCallFlow < 0 || idxPutFlow < 0 || idxCashNet < 0 || idxTime < 0)
+                int idxSeries1 = _series1Column != ColumnType.None ? FindIndexByColumn(headers, _series1Column) : -1;
+                int idxSeries2 = _series2Column != ColumnType.None ? FindIndexByColumn(headers, _series2Column) : -1;
+                int idxSeries3 = _series3Column != ColumnType.None ? FindIndexByColumn(headers, _series3Column) : -1;
+
+                if (idxTime < 0)
                 {
-                    _error = "Required columns not found in CSV";
+                    _error = "Required time column not found in CSV";
+                    return;
+                }
+
+                // Al menos una serie debe estar seleccionada
+                if (idxSeries1 < 0 && idxSeries2 < 0 && idxSeries3 < 0)
+                {
+                    _error = "Select at least one column for the series";
                     return;
                 }
 
                 for (int i = 1; i < lines.Length; i++)
                 {
                     var cols = SplitCsvLine(lines[i]);
-                    if (cols.Length <= Math.Max(Math.Max(idxLastPrice, idxCallFlow), Math.Max(idxPutFlow, Math.Max(idxCashNet, idxTime))))
+                    if (cols.Length <= idxTime)
                         continue;
 
-                    if (!TryParseDecimal(cols[idxLastPrice], out var lastPrice)) continue;
-                    if (!TryParseDecimal(cols[idxCallFlow], out var callFlow)) callFlow = 0;
-                    if (!TryParseDecimal(cols[idxPutFlow], out var putFlow)) putFlow = 0;
-                    if (!TryParseDecimal(cols[idxCashNet], out var cashNet)) cashNet = 0;
+                    decimal series1Val = idxSeries1 >= 0 && idxSeries1 < cols.Length && TryParseDecimal(cols[idxSeries1], out var s1) ? s1 : 0;
+                    decimal series2Val = idxSeries2 >= 0 && idxSeries2 < cols.Length && TryParseDecimal(cols[idxSeries2], out var s2) ? s2 : 0;
+                    decimal series3Val = idxSeries3 >= 0 && idxSeries3 < cols.Length && TryParseDecimal(cols[idxSeries3], out var s3) ? s3 : 0;
 
                     DateTime timestamp = DateTime.Now;
                     if (!TryParseDateTime(cols[idxTime], out timestamp))
@@ -912,15 +1072,13 @@ namespace ATAS.Indicators.Technical
                             timestamp = DateTime.Now;
                     }
 
-                    // Guardar el timestamp como está en el CSV (sin ajustes)
-                    // Los ajustes se harán en OnCalculate cuando se compare con la vela de ATAS
                     var data = new MoneyFlowData
                     {
                         Timestamp = timestamp,
-                        LastPrice = lastPrice,
-                        CallMoneyFlow = callFlow,
-                        PutMoneyFlow = putFlow,
-                        CashNet = cashNet
+                        LastPrice = series1Val,
+                        CallMoneyFlow = series1Val,
+                        PutMoneyFlow = series2Val,
+                        CashNet = series3Val
                     };
 
                     _data.Add(data);
@@ -975,6 +1133,75 @@ namespace ATAS.Indicators.Technical
                     return i;
             }
             return -1;
+        }
+
+        private static int FindIndexByColumn(string[] headers, ColumnType columnType)
+        {
+            string columnName = columnType switch
+            {
+                ColumnType.None => "",
+                ColumnType.LastPrice => "last_price",
+                ColumnType.CallMoneyFlow => "call_money_flow",
+                ColumnType.PutMoneyFlow => "put_money_flow",
+                ColumnType.MfRatio => "mf_ratio",
+                ColumnType.CashNet => "cash_net",
+                ColumnType.CallDeltaFlow => "call_delta_flow",
+                ColumnType.PutDeltaFlow => "put_delta_flow",
+                ColumnType.DfRatio => "df_ratio",
+                ColumnType.DeltaCall => "delta_call",
+                ColumnType.DeltaPut => "delta_put",
+                ColumnType.DeltaNet => "delta_net",
+                ColumnType.CallIvFlow => "call_iv_flow",
+                ColumnType.PutIvFlow => "put_iv_flow",
+                ColumnType.IvfRatio => "ivf_ratio",
+                ColumnType.CallOtmImpact => "call_otm_impact",
+                ColumnType.PutOtmImpact => "put_otm_impact",
+                ColumnType.CallItmImpact => "call_itm_impact",
+                ColumnType.PutItmImpact => "put_itm_impact",
+                ColumnType.CallGex => "call_gex",
+                ColumnType.PutGex => "put_gex",
+                ColumnType.NetGex => "net_gex",
+                ColumnType.CallVannaFlow => "call_vanna_flow",
+                ColumnType.PutVannaFlow => "put_vanna_flow",
+                ColumnType.VannaRatio => "vanna_ratio",
+                ColumnType.CallCharm => "call_charm",
+                ColumnType.PutCharm => "put_charm",
+                ColumnType.CharmPressure => "charm_pressure",
+                ColumnType.CallIvFlowItm => "call_iv_flow_itm",
+                ColumnType.PutIvFlowItm => "put_iv_flow_itm",
+                ColumnType.CallIvFlowOtm => "call_iv_flow_otm",
+                ColumnType.PutIvFlowOtm => "put_iv_flow_otm",
+                ColumnType.IvNet => "iv_net",
+                ColumnType.CallVolImbalance => "call_vol_imbalance",
+                ColumnType.PutVolImbalance => "put_vol_imbalance",
+                ColumnType.VolImbalanceRatio => "vol_imbalance_ratio",
+                ColumnType.CallSmartMoney => "call_smart_money",
+                ColumnType.PutSmartMoney => "put_smart_money",
+                ColumnType.SmartMoneyRatio => "smart_money_ratio",
+                ColumnType.CallHedgePressure => "call_hedge_pressure",
+                ColumnType.PutHedgePressure => "put_hedge_pressure",
+                ColumnType.NetHedgePressure => "net_hedge_pressure",
+                ColumnType.SkewPressure => "skew_pressure",
+                ColumnType.SkewIntensity => "skew_intensity",
+                ColumnType.PremiumFlow => "premium_flow",
+                ColumnType.CallPremium => "call_premium",
+                ColumnType.PutPremium => "put_premium",
+                ColumnType.Volume => "volume",
+                ColumnType.CallVolume => "call_volume",
+                ColumnType.PutVolume => "put_volume",
+                ColumnType.OpenInterest => "open_interest",
+                ColumnType.CallOpenInterest => "call_open_interest",
+                ColumnType.PutOpenInterest => "put_open_interest",
+                ColumnType.ImpliedVolatility => "implied_volatility",
+                ColumnType.CallIv => "call_iv",
+                ColumnType.PutIv => "put_iv",
+                _ => ""
+            };
+            
+            if (string.IsNullOrEmpty(columnName))
+                return -1;
+                
+            return FindIndex(headers, columnName);
         }
 
         private static string[] SplitCsvLine(string line)

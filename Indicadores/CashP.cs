@@ -1520,15 +1520,6 @@ namespace ATAS.Indicators.Technical
                         int valX = xCenter - leftW - valW -6;
                         int valY = top -2;
                         context.DrawString(valTxt, sideFont, leftColor, valX, valY);
-
-                        if (_showCenterStrikes)
-                        {
-                            var sTxt = $"({row.StrikeSpy.ToString(_strikeFormat, CultureInfo.InvariantCulture)})";
-                            int sW = EstimateTextWidth(sTxt, strikeFont);
-                            int sx = valX - sW - _strikeLeftMarginPx; // a la izquierda del valor con margen configurable
-                            int sy = y - (_strikeFontSize /2) -1;
-                            context.DrawString(sTxt, strikeFont, _strikeColor, sx, sy);
-                        }
                     }
 
                     // right value
@@ -1539,15 +1530,25 @@ namespace ATAS.Indicators.Technical
                         int valX = xCenter + rightW +6;
                         int valY = top -2;
                         context.DrawString(valTxt, sideFont, rightColor, valX, valY);
+                    }
+                }
 
-                        if (_showCenterStrikes)
-                        {
-                            int valW = EstimateTextWidth(valTxt, sideFont);
-                            var sTxt = $"({row.StrikeSpy.ToString(_strikeFormat, CultureInfo.InvariantCulture)})";
-                            int sx = valX + valW + _strikeRightMarginPx; // a la derecha del valor con margen configurable
-                            int sy = y - (_strikeFontSize /2) -1;
-                            context.DrawString(sTxt, strikeFont, _strikeColor, sx, sy);
-                        }
+                // Strike labels: dibujar siempre que esté activado, independientemente de _showValues
+                if (_showCenterStrikes)
+                {
+                    var sTxt = $"({row.StrikeSpy.ToString(_strikeFormat, CultureInfo.InvariantCulture)})";
+                    int sW = EstimateTextWidth(sTxt, strikeFont);
+                    int sy = y - (_strikeFontSize /2) -1;
+
+                    if (leftW > 0)
+                    {
+                        int sxLeft = xCenter - leftW - sW - _strikeLeftMarginPx;
+                        context.DrawString(sTxt, strikeFont, _strikeColor, sxLeft, sy);
+                    }
+                    if (rightW > 0)
+                    {
+                        int sxRight = xCenter + rightW + _strikeRightMarginPx;
+                        context.DrawString(sTxt, strikeFont, _strikeColor, sxRight, sy);
                     }
                 }
             }
@@ -2153,16 +2154,35 @@ namespace ATAS.Indicators.Technical
             lastTimestamp = null;
             var result = new List<StrikeRow>();
 
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            // Construir ruta completa si se pasa solo el nombre de archivo
+            string fullPath = path;
+            try
             {
-                error = $"CSV not found: {path}";
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    error = "CSV path is empty";
+                    return result;
+                }
+
+                if (!Path.IsPathRooted(path))
+                {
+                    string userDocuments = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                    string sessionDate = DateTime.Now.ToString("yyyy_MM_dd");
+                    fullPath = Path.Combine(userDocuments, "dashcsv", "Dashdata", $"session_{sessionDate}", "ChainTable", path);
+                }
+            }
+            catch { fullPath = path; }
+
+            if (!File.Exists(fullPath))
+            {
+                error = $"CSV not found: {fullPath}";
                 return result;
             }
 
             try
             {
-                var lines = File.ReadAllLines(path);
-                if (lines.Length ==0)
+                var lines = File.ReadAllLines(fullPath);
+                if (lines.Length == 0)
                 {
                     error = "CSV empty";
                     return result;
@@ -2170,39 +2190,42 @@ namespace ATAS.Indicators.Technical
 
                 // Parse header
                 var headers = SplitCsvLine(lines[0]);
-                int idxStrike = FindIndex(headers, "strike");
+                int idxStrike = FindIndex(headers, "strike"); // "Strike"
 
-                // Elegir columnas calls/puts según claves proporcionadas; fallback a genérico
+                // Calls/Puts: usar claves configurables o defaults del nuevo formato
                 int idxCalls = -1;
                 if (!string.IsNullOrWhiteSpace(callsColumnKey))
                     idxCalls = FindIndex(headers, callsColumnKey);
-                if (idxCalls <0)
+                if (idxCalls < 0)
+                    idxCalls = FindIndex(headers, "call$$$"); // soportar "CALL $$$"
+                if (idxCalls < 0)
                     idxCalls = FindIndex(headers, "call");
 
                 int idxPuts = -1;
                 if (!string.IsNullOrWhiteSpace(putsColumnKey))
                     idxPuts = FindIndex(headers, putsColumnKey);
-                if (idxPuts <0)
+                if (idxPuts < 0)
+                    idxPuts = FindIndex(headers, "puts$$$"); // soportar "PUTS $$$"
+                if (idxPuts < 0)
                     idxPuts = FindIndex(headers, "put");
 
-                int idxTs = FindIndex(headers, "time"); // matches Timestamp
-                int idxSpy = FindIndex(headers, "spy");
-                int idxEs = FindIndex(headers, "es");
-                int idxPrice = FindIndex(headers, "price");
+                // Nuevo formato: Timestamp, QQQ_Price, NQ_Price
+                int idxTs = FindIndex(headers, "timestamp");
+                int idxQqqPrice = FindIndex(headers, "qqqprice");
+                int idxNqPrice = FindIndex(headers, "nqprice");
 
-                if (idxStrike <0 || idxCalls <0 || idxPuts <0)
+                if (idxStrike < 0 || idxCalls < 0 || idxPuts < 0)
                 {
-                    error = "CSV headers not recognized. Configure 'Calls column key' y 'Puts column key'.";
-
+                    error = "CSV headers not recognized. Expected Strike, CALL $$$, PUTS $$$";
                     return result;
                 }
 
                 // If only latest timestamp requested, find max
                 DateTime? maxTs = null;
                 string? maxTsRaw = null;
-                if (useLatestTimestamp && idxTs >=0)
+                if (useLatestTimestamp && idxTs >= 0)
                 {
-                    for (int i =1; i < lines.Length; i++)
+                    for (int i = 1; i < lines.Length; i++)
                     {
                         if (string.IsNullOrWhiteSpace(lines[i])) continue;
                         var cols = SplitCsvLine(lines[i]);
@@ -2220,83 +2243,67 @@ namespace ATAS.Indicators.Technical
                         }
                         else
                         {
-                            // fallback lexicographic
-                            if (maxTsRaw == null || string.CompareOrdinal(tsRaw, maxTsRaw) >0)
+                            if (maxTsRaw == null || string.CompareOrdinal(tsRaw, maxTsRaw) > 0)
                                 maxTsRaw = tsRaw;
                         }
                     }
                 }
 
-                // Load external quotes if needed
-                Dictionary<string, decimal>? factorByTs = null;
-                string? quotesErr = null;
-                if (enableConversion && !autoConversionEnabled && (idxSpy <0 || idxEs <0) && !string.IsNullOrWhiteSpace(quotesCsvPath) && File.Exists(quotesCsvPath))
-                {
-                    factorByTs = LoadQuotesFactors(quotesCsvPath!, out quotesErr);
-                    if (quotesErr != null && error == null) error = $"Quotes CSV: {quotesErr}";
-                }
-
-                decimal manualFactor = (enableConversion && !autoConversionEnabled && manualSpy >0 && manualEs >0) ? SafeDiv(manualEs, manualSpy) :1m;
-
                 var agg = new Dictionary<decimal, (decimal calls, decimal puts, decimal spyStrike)>();
-                for (int i =1; i < lines.Length; i++)
+                for (int i = 1; i < lines.Length; i++)
                 {
                     var line = lines[i];
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     var cols = SplitCsvLine(line);
-                    if (cols.Length <= Math.Max(idxStrike, Math.Max(idxCalls, Math.Max(idxPuts, idxTs))))
+                    if (cols.Length <= Math.Max(idxStrike, Math.Max(idxCalls, Math.Max(idxPuts, Math.Max(idxTs, Math.Max(idxQqqPrice, idxNqPrice))))))
                         continue;
 
-                    string? tsRaw = idxTs >=0 && idxTs < cols.Length ? cols[idxTs]?.Trim('"', ' ') : null;
+                    string? tsRaw = idxTs >= 0 && idxTs < cols.Length ? cols[idxTs]?.Trim('"', ' ') : null;
 
-                    if (useLatestTimestamp && idxTs >=0)
+                    if (useLatestTimestamp && idxTs >= 0)
                     {
                         if (!string.Equals(tsRaw, maxTsRaw, StringComparison.Ordinal))
                             continue;
                     }
 
-                    if (!TryParseDecimal(cols[idxStrike], out var strikeSpy)) continue; // original SPY
-                    if (!TryParseDecimal(cols[idxCalls], out var calls)) calls =0;
-                    if (!TryParseDecimal(cols[idxPuts], out var puts)) puts =0;
+                    if (!TryParseDecimal(cols[idxStrike], out var strikeQqq)) continue; // QQQ strike
+                    if (!TryParseDecimal(cols[idxCalls], out var calls)) calls = 0;
+                    if (!TryParseDecimal(cols[idxPuts], out var puts)) puts = 0;
 
-                    // Capturar último Price del CSV (si existe). Se usará para autoconversión
-                    if (idxPrice >= 0 && idxPrice < cols.Length && TryParseDecimal(cols[idxPrice], out var pr) && pr > 0)
+                    // Capturar último QQQ_Price para autoconversión y timestamp
+                    if (idxQqqPrice >= 0 && idxQqqPrice < cols.Length && TryParseDecimal(cols[idxQqqPrice], out var qqq) && qqq > 0)
                     {
-                        lastPrice = pr;
+                        lastPrice = qqq;
                         if (idxTs >= 0 && tsRaw != null && DateTime.TryParse(tsRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var tsdt))
                             lastTimestamp = tsdt;
                     }
 
-                    // determine conversion factor (solo si NO es autoconversión)
-                    decimal factor =1m;
+                    // Cuando la conversión manual (EnableConversion) esté activa y NO hay autoconversión
+                    decimal factor = 1m;
                     if (!autoConversionEnabled && enableConversion)
                     {
-                        if (idxSpy >=0 && idxEs >=0 && idxSpy < cols.Length && idxEs < cols.Length &&
-                            TryParseDecimal(cols[idxSpy], out var spyVal) && TryParseDecimal(cols[idxEs], out var esVal) && spyVal >0)
+                        // Preferir NQ_Price / QQQ_Price si ambas están en el CSV
+                        if (idxQqqPrice >= 0 && idxNqPrice >= 0 && TryParseDecimal(cols[idxQqqPrice], out var qqqVal) && qqqVal > 0 &&
+                            TryParseDecimal(cols[idxNqPrice], out var nqVal) && nqVal > 0)
                         {
-                            factor = SafeDiv(esVal, spyVal);
+                            factor = SafeDiv(nqVal, qqqVal);
                         }
-                        else if (factorByTs != null && tsRaw != null && factorByTs.TryGetValue(tsRaw, out var fByTs))
+                        else if (manualSpy > 0 && manualEs > 0)
                         {
-                            factor = fByTs;
-                        }
-                        else if (manualFactor >0)
-                        {
-                            factor = manualFactor;
+                            factor = SafeDiv(manualEs, manualSpy);
                         }
                     }
 
-                    var outStrike = autoConversionEnabled ? strikeSpy : (enableConversion ? (strikeSpy * factor) : strikeSpy);
-                    if (!autoConversionEnabled && priceStep >0)
+                    var outStrike = autoConversionEnabled ? strikeQqq : (enableConversion ? (strikeQqq * factor) : strikeQqq);
+                    if (!autoConversionEnabled && priceStep > 0)
                         outStrike = RoundToStep(outStrike, priceStep);
 
                     if (!agg.TryGetValue(outStrike, out var tuple))
-                        agg[outStrike] = (calls, puts, strikeSpy);
+                        agg[outStrike] = (calls, puts, strikeQqq);
                     else
-                        agg[outStrike] = (tuple.calls + calls, tuple.puts + puts, tuple.spyStrike); // conservar SPY original
+                        agg[outStrike] = (tuple.calls + calls, tuple.puts + puts, tuple.spyStrike);
                 }
 
-                // Si usamos latest timestamp y lo encontramos, establecerlo si no se estableció antes
                 if (useLatestTimestamp && maxTs.HasValue && lastTimestamp == null)
                     lastTimestamp = maxTs;
 
@@ -2350,9 +2357,14 @@ namespace ATAS.Indicators.Technical
                     var cols = SplitCsvLine(line);
                     if (cols.Length <= Math.Max(idxTs, Math.Max(idxSpy, idxEs))) continue;
                     var tsRaw = cols[idxTs]?.Trim('"', ' ');
-                    if (!TryParseDecimal(cols[idxSpy], out var spy) || !TryParseDecimal(cols[idxEs], out var es) || spy <=0)
-                        continue;
-                    dict[tsRaw ?? string.Empty] = SafeDiv(es, spy);
+                    if (string.IsNullOrEmpty(tsRaw)) continue;
+
+                    if (DateTime.TryParse(tsRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var ts))
+                    {
+                        if (!TryParseDecimal(cols[idxSpy], out var spy) || !TryParseDecimal(cols[idxEs], out var es) || spy <=0)
+                            continue;
+                        dict[tsRaw ?? string.Empty] = SafeDiv(es, spy);
+                    }
                 }
 
                 return dict;
