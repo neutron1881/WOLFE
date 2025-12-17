@@ -162,10 +162,6 @@ namespace ATAS.Indicators.Technical
         // Almacenar Big Trades detectados
         private Dictionary<int, (decimal callDiff, decimal putDiff, decimal netDiff)> _bigTrades = new();
 
-        // Almacenar señales de compra/venta
-        private Dictionary<int, bool> _bullishSignals = new(); // true = bullish signal
-        private Dictionary<int, bool> _bearishSignals = new(); // true = bearish signal
-
         // ValueDataSeries para renderizar en el panel
         private readonly ValueDataSeries _callFlowSeries = new("CallFlow", "Call Money Flow") 
         { 
@@ -199,6 +195,17 @@ namespace ATAS.Indicators.Technical
             VisualType = VisualMode.Histogram,
             Color = System.Windows.Media.Colors.LightGreen
         };
+
+        // Líneas de niveles (porcentaje de máximos) para Call/Put Flow
+        private readonly ValueDataSeries _callLevel100 = new("Call 100%", "Call 100%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.DimGray };
+        private readonly ValueDataSeries _callLevel75 = new("Call 75%", "Call 75%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.Gray };
+        private readonly ValueDataSeries _callLevel50 = new("Call 50%", "Call 50%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.DarkGray };
+        private readonly ValueDataSeries _callLevel25 = new("Call 25%", "Call 25%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.LightGray };
+
+        private readonly ValueDataSeries _putLevel100 = new("Put 100%", "Put 100%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.DimGray };
+        private readonly ValueDataSeries _putLevel75 = new("Put 75%", "Put 75%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.Gray };
+        private readonly ValueDataSeries _putLevel50 = new("Put 50%", "Put 50%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.DarkGray };
+        private readonly ValueDataSeries _putLevel25 = new("Put 25%", "Put 25%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.LightGray };
 
         // Series de análisis Call/Put Flow
         private readonly ValueDataSeries _flowAnalysisSeries = new("FlowAnalysis", "Call/Put Analysis")
@@ -329,6 +336,10 @@ namespace ATAS.Indicators.Technical
         private decimal _callMoneyFlowThreshold = 1m;
         private decimal _putMoneyFlowThreshold = 1m;
         private decimal _cashNetThreshold = 1m;
+        private decimal _callDeltaPositiveThreshold = 0m;
+        private decimal _callDeltaNegativeThreshold = 0m;
+        private decimal _putDeltaPositiveThreshold = 0m;
+        private decimal _putDeltaNegativeThreshold = 0m;
         private int _bigTradeBaseRadius = 6;
         private int _bigTradeMaxRadius = 30;
         private decimal _bigTradeRadiusPerUnit = 0.0000001m;
@@ -340,6 +351,10 @@ namespace ATAS.Indicators.Technical
         private Color _putMoneyFlowMarkerColor = Color.IndianRed;
         private Color _cashNetMarkerColor = Color.MediumSeaGreen;
         private Color _cashNetNegativeMarkerColor = Color.Red;
+        private Color _callDeltaPositiveColor = Color.LightSkyBlue;
+        private Color _callDeltaNegativeColor = Color.SteelBlue;
+        private Color _putDeltaPositiveColor = Color.Salmon;
+        private Color _putDeltaNegativeColor = Color.IndianRed;
 
         [Display(GroupName = "2. Big Trade Filters", Name = "Show Big Trade Markers", Order = 10)]
         public bool ShowBigTradeMarkers
@@ -382,6 +397,62 @@ namespace ATAS.Indicators.Technical
                 _bigTrades.Clear();
                 RecalculateValues();
             }
+        }
+
+        [Display(GroupName = "2. Delta Filters", Name = "Call Δ Positive Threshold", Order = 50, Description = "Mínimo incremento de Call Δ para mostrar")]
+        public decimal CallDeltaPositiveThreshold
+        {
+            get => _callDeltaPositiveThreshold;
+            set { _callDeltaPositiveThreshold = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Delta Filters", Name = "Call Δ Negative Threshold", Order = 60, Description = "Mínimo decremento de Call Δ (valor positivo)")]
+        public decimal CallDeltaNegativeThreshold
+        {
+            get => _callDeltaNegativeThreshold;
+            set { _callDeltaNegativeThreshold = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Delta Filters", Name = "Put Δ Positive Threshold", Order = 70, Description = "Mínimo incremento de Put Δ para mostrar")]
+        public decimal PutDeltaPositiveThreshold
+        {
+            get => _putDeltaPositiveThreshold;
+            set { _putDeltaPositiveThreshold = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Delta Filters", Name = "Put Δ Negative Threshold", Order = 80, Description = "Mínimo decremento de Put Δ (valor positivo)")]
+        public decimal PutDeltaNegativeThreshold
+        {
+            get => _putDeltaNegativeThreshold;
+            set { _putDeltaNegativeThreshold = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "3. Delta Colors", Name = "Call Δ Positive Color", Order = 10)]
+        public Color CallDeltaPositiveColor
+        {
+            get => _callDeltaPositiveColor;
+            set { _callDeltaPositiveColor = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "3. Delta Colors", Name = "Call Δ Negative Color", Order = 20)]
+        public Color CallDeltaNegativeColor
+        {
+            get => _callDeltaNegativeColor;
+            set { _callDeltaNegativeColor = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "3. Delta Colors", Name = "Put Δ Positive Color", Order = 30)]
+        public Color PutDeltaPositiveColor
+        {
+            get => _putDeltaPositiveColor;
+            set { _putDeltaPositiveColor = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "3. Delta Colors", Name = "Put Δ Negative Color", Order = 40)]
+        public Color PutDeltaNegativeColor
+        {
+            get => _putDeltaNegativeColor;
+            set { _putDeltaNegativeColor = value; RecalculateValues(); }
         }
 
         [Display(GroupName = "2. Big Trade Filters", Name = "Base Radius (px)", Order = 50)]
@@ -490,6 +561,10 @@ namespace ATAS.Indicators.Technical
         private Color _bearishColor = Color.Orange;
         private Color _bearishMomentumColor = Color.Red;
 
+        // Máximos observados para niveles de porcentaje
+        private decimal _maxCallFlow = 0m;
+        private decimal _maxPutFlow = 0m;
+
         [Display(GroupName = "5. Sentiment Colors", Name = "Bullish Momentum (> 0.6)", Order = 10, Description = "Color para Calls muy fuertes")]
         public Color BullishMomentumColor
         {
@@ -563,14 +638,6 @@ namespace ATAS.Indicators.Technical
             set { _sentimentBearishThreshold = Math.Clamp(value, -1m, 1m); RecalculateValues(); }
         }
 
-        // Signal Settings
-        private int _consecutiveBarsForSignal = 3;
-        private Color _bullishSignalColor = Color.Lime;
-        private Color _bearishSignalColor = Color.Red;
-        private int _signalMarkerSize = 15;
-        private bool _showBullishSignals = true;
-        private bool _showBearishSignals = true;
-
         // Ratio alert backing fields
         private decimal _ratioUpperAlert = 1.2m;
         private decimal _ratioLowerAlert = 0.8m;
@@ -611,6 +678,14 @@ namespace ATAS.Indicators.Technical
             DataSeries.Add(_callFlowDeltaSeries);
             DataSeries.Add(_putFlowDeltaSeries);
             DataSeries.Add(_cashNetDeltaSeries);
+            DataSeries.Add(_callLevel100);
+            DataSeries.Add(_callLevel75);
+            DataSeries.Add(_callLevel50);
+            DataSeries.Add(_callLevel25);
+            DataSeries.Add(_putLevel100);
+            DataSeries.Add(_putLevel75);
+            DataSeries.Add(_putLevel50);
+            DataSeries.Add(_putLevel25);
             DataSeries.Add(_flowAnalysisSeries);
             DataSeries.Add(_flowDivergenceSeries);
             DataSeries.Add(_sentimentSeries);
@@ -677,115 +752,10 @@ namespace ATAS.Indicators.Technical
                 }
             }
 
-            // Dibujar señales de compra/venta en el gráfico de precios
-            DrawSignalsOnPriceChart(context);
-
             // Dibujar panel informativo superior
             if (_showInfoPanel)
             {
                 DrawInfoPanel(context);
-            }
-        }
-        
-        private void DrawSignalsOnPriceChart(RenderContext context)
-        {
-            if (ChartInfo?.PriceChartContainer == null)
-                return;
-
-            // Obtener tamaño del tick en píxeles
-            decimal tickSize = InstrumentInfo?.TickSize ?? 0.01m;
-            int tickOffsetPx = Math.Max(1, (int)Math.Abs(ChartInfo.PriceChartContainer.GetYByPrice(0m, false) - 
-                                           ChartInfo.PriceChartContainer.GetYByPrice(tickSize, false)));
-            int offsetPx = tickOffsetPx * 8; // 8 ticks offset
-
-            // Dibujar señales alcistas
-            if (_showBullishSignals)
-            {
-                foreach (var signal in _bullishSignals)
-                {
-                    int bar = signal.Key;
-                    if (bar < FirstVisibleBarNumber || bar > LastVisibleBarNumber)
-                        continue;
-
-                    var candle = GetCandle(bar);
-                    if (candle == null) continue;
-
-                    int xBar = ChartInfo.PriceChartContainer.GetXByBar(bar, false);
-                    int yLow = ChartInfo.PriceChartContainer.GetYByPrice(candle.Low, false);
-                    int ySignal = yLow + offsetPx; // Debajo del Low con 8 ticks offset
-
-                    // Dibujar triángulo/flecha hacia arriba
-                    DrawUpArrow(context, xBar, ySignal, _bullishSignalColor);
-                }
-            }
-
-            // Dibujar señales bajistas
-            if (_showBearishSignals)
-            {
-                foreach (var signal in _bearishSignals)
-                {
-                    int bar = signal.Key;
-                    if (bar < FirstVisibleBarNumber || bar > LastVisibleBarNumber)
-                        continue;
-
-                    var candle = GetCandle(bar);
-                    if (candle == null) continue;
-
-                    int xBar = ChartInfo.PriceChartContainer.GetXByBar(bar, false);
-                    int yHigh = ChartInfo.PriceChartContainer.GetYByPrice(candle.High, false);
-                    int ySignal = yHigh - offsetPx; // Encima del High con 8 ticks offset
-
-                    // Dibujar triángulo/flecha hacia abajo
-                    DrawDownArrow(context, xBar, ySignal, _bearishSignalColor);
-                }
-            }
-        }
-
-        private void DrawUpArrow(RenderContext context, int x, int y, Color color)
-        {
-            // Dibujar triángulo hacia arriba
-            int size = _signalMarkerSize / 2;
-            var points = new[]
-            {
-                new System.Drawing.Point(x, y - size),           // punta arriba
-                new System.Drawing.Point(x - size, y + size),    // esquina izquierda abajo
-                new System.Drawing.Point(x + size, y + size)     // esquina derecha abajo
-            };
-
-            try
-            {
-                context.FillPolygon(color, points);
-                context.DrawPolygon(new RenderPen(color, 2), points);
-            }
-            catch
-            {
-                // Fallback: dibujar círculo
-                var rect = new System.Drawing.Rectangle(x - size, y - size, size * 2, size * 2);
-                context.FillEllipse(color, rect);
-            }
-        }
-
-        private void DrawDownArrow(RenderContext context, int x, int y, Color color)
-        {
-            // Dibujar triángulo hacia abajo
-            int size = _signalMarkerSize / 2;
-            var points = new[]
-            {
-                new System.Drawing.Point(x, y + size),           // punta abajo
-                new System.Drawing.Point(x - size, y - size),    // esquina izquierda arriba
-                new System.Drawing.Point(x + size, y - size)     // esquina derecha arriba
-            };
-
-            try
-            {
-                context.FillPolygon(color, points);
-                context.DrawPolygon(new RenderPen(color, 2), points);
-            }
-            catch
-            {
-                // Fallback: dibujar círculo
-                var rect = new System.Drawing.Rectangle(x - size, y - size, size * 2, size * 2);
-                context.FillEllipse(color, rect);
             }
         }
 
@@ -974,9 +944,35 @@ namespace ATAS.Indicators.Technical
                         var prevDataForDelta = FindClosestDataByTime(prevBarTimeInCsvZoneForDelta);
                         if (prevDataForDelta != null)
                         {
-                            _callFlowDeltaSeries[bar] = closestData.CallMoneyFlow - prevDataForDelta.CallMoneyFlow;
-                            _putFlowDeltaSeries[bar] = closestData.PutMoneyFlow - prevDataForDelta.PutMoneyFlow;
+                            var callDelta = closestData.CallMoneyFlow - prevDataForDelta.CallMoneyFlow;
+                            var putDelta = closestData.PutMoneyFlow - prevDataForDelta.PutMoneyFlow;
                             _cashNetDeltaSeries[bar] = closestData.CashNet - prevDataForDelta.CashNet;
+
+                            // Filtros y colores para Call Δ
+                            decimal filteredCallDelta = 0m;
+                            if (callDelta >= _callDeltaPositiveThreshold && _callDeltaPositiveThreshold >= 0)
+                                filteredCallDelta = callDelta;
+                            else if (callDelta <= -_callDeltaNegativeThreshold && _callDeltaNegativeThreshold >= 0)
+                                filteredCallDelta = callDelta;
+                            _callFlowDeltaSeries[bar] = filteredCallDelta;
+                            if (filteredCallDelta != 0)
+                            {
+                                var c = filteredCallDelta > 0 ? _callDeltaPositiveColor : _callDeltaNegativeColor;
+                                _callFlowDeltaSeries.Colors[bar] = c;
+                            }
+
+                            // Filtros y colores para Put Δ
+                            decimal filteredPutDelta = 0m;
+                            if (putDelta >= _putDeltaPositiveThreshold && _putDeltaPositiveThreshold >= 0)
+                                filteredPutDelta = putDelta;
+                            else if (putDelta <= -_putDeltaNegativeThreshold && _putDeltaNegativeThreshold >= 0)
+                                filteredPutDelta = putDelta;
+                            _putFlowDeltaSeries[bar] = filteredPutDelta;
+                            if (filteredPutDelta != 0)
+                            {
+                                var c = filteredPutDelta > 0 ? _putDeltaPositiveColor : _putDeltaNegativeColor;
+                                _putFlowDeltaSeries.Colors[bar] = c;
+                            }
                         }
                     }
                 }
@@ -985,6 +981,23 @@ namespace ATAS.Indicators.Technical
                 decimal callFlow = closestData.CallMoneyFlow;
                 decimal putFlow = closestData.PutMoneyFlow;
                 decimal totalFlow = callFlow + putFlow;
+
+                // Actualizar máximos para líneas de porcentaje
+                if (callFlow > _maxCallFlow)
+                    _maxCallFlow = callFlow;
+                if (putFlow > _maxPutFlow)
+                    _maxPutFlow = putFlow;
+
+                // Setear líneas de niveles por barra
+                _callLevel100[bar] = _maxCallFlow;
+                _callLevel75[bar] = _maxCallFlow * 0.75m;
+                _callLevel50[bar] = _maxCallFlow * 0.50m;
+                _callLevel25[bar] = _maxCallFlow * 0.25m;
+
+                _putLevel100[bar] = _maxPutFlow;
+                _putLevel75[bar] = _maxPutFlow * 0.75m;
+                _putLevel50[bar] = _maxPutFlow * 0.50m;
+                _putLevel25[bar] = _maxPutFlow * 0.25m;
                 
                 // Ratio Call/Put (0-1: dominance scale)
                 if (totalFlow != 0)
@@ -1062,8 +1075,6 @@ namespace ATAS.Indicators.Technical
                     _candleColorSeries[bar] = mediaColor;
                 }
 
-                // Detectar señales de compra/venta basadas en velas consecutivas
-                DetectSignals(bar);
             }
         }
 
@@ -1085,48 +1096,6 @@ namespace ATAS.Indicators.Technical
                 .OrderBy(kvp => Math.Abs((kvp.Key - targetTime).TotalMinutes))
                 .First()
                 .Value;
-        }
-
-        private void DetectSignals(int bar)
-        {
-            if (bar < _consecutiveBarsForSignal - 1)
-                return;
-
-            // Verificar señal alcista (Bullish Momentum consecutivo)
-            bool bullishSignal = true;
-            for (int i = 0; i < _consecutiveBarsForSignal; i++)
-            {
-                int checkBar = bar - i;
-                decimal sentiment = _sentimentSeries[checkBar];
-                if (sentiment <= _sentimentBullishMomentumThreshold)
-                {
-                    bullishSignal = false;
-                    break;
-                }
-            }
-
-            if (bullishSignal && !_bullishSignals.ContainsKey(bar))
-            {
-                _bullishSignals[bar] = true;
-            }
-
-            // Verificar señal bajista (Bearish Momentum consecutivo)
-            bool bearishSignal = true;
-            for (int i = 0; i < _consecutiveBarsForSignal; i++)
-            {
-                int checkBar = bar - i;
-                decimal sentiment = _sentimentSeries[checkBar];
-                if (sentiment >= _sentimentBearishThreshold)
-                {
-                    bearishSignal = false;
-                    break;
-                }
-            }
-
-            if (bearishSignal && !_bearishSignals.ContainsKey(bar))
-            {
-                _bearishSignals[bar] = true;
-            }
         }
 
         private void LoadMoneyFlowData()
@@ -1404,6 +1373,11 @@ namespace ATAS.Indicators.Technical
                 return true;
             }
             return false;
+        }
+
+        private System.Windows.Media.Color ToMediaColor(Color color)
+        {
+            return System.Windows.Media.Color.FromArgb(color.A, color.R, color.G, color.B);
         }
 
         private Color GetSentimentColor(decimal sentiment)
