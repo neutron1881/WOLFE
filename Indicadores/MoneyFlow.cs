@@ -960,6 +960,10 @@ namespace ATAS.Indicators.Technical
                                 var c = filteredCallDelta > 0 ? _callDeltaPositiveColor : _callDeltaNegativeColor;
                                 _callFlowDeltaSeries.Colors[bar] = c;
                             }
+                            else
+                            {
+                                _callFlowDeltaSeries.Colors[bar] = Color.Transparent;
+                            }
 
                             // Filtros y colores para Put Δ
                             decimal filteredPutDelta = 0m;
@@ -972,6 +976,10 @@ namespace ATAS.Indicators.Technical
                             {
                                 var c = filteredPutDelta > 0 ? _putDeltaPositiveColor : _putDeltaNegativeColor;
                                 _putFlowDeltaSeries.Colors[bar] = c;
+                            }
+                            else
+                            {
+                                _putFlowDeltaSeries.Colors[bar] = Color.Transparent;
                             }
                         }
                     }
