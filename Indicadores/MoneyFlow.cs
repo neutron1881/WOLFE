@@ -16,6 +16,50 @@ namespace ATAS.Indicators.Technical
     [Category("NewFlow")]
     public class MoneyFlow : Indicator
     {
+        private sealed class RollingStats
+        {
+            private readonly Queue<decimal> _window = new();
+            private decimal _sum;
+            private decimal _sumSq;
+
+            public int Count => _window.Count;
+
+            public void Reset()
+            {
+                _window.Clear();
+                _sum = 0m;
+                _sumSq = 0m;
+            }
+
+            public void Push(decimal v, int max)
+            {
+                _window.Enqueue(v);
+                _sum += v;
+                _sumSq += v * v;
+                while (_window.Count > max)
+                {
+                    var old = _window.Dequeue();
+                    _sum -= old;
+                    _sumSq -= old * old;
+                }
+            }
+
+            public (decimal mean, decimal stdDev) GetMeanStdDev()
+            {
+                if (_window.Count < 2)
+                    return (0m, 0m);
+
+                var mean = _sum / _window.Count;
+                var variance = (_sumSq / _window.Count) - (mean * mean);
+                if (variance < 0)
+                    variance = 0;
+
+                var std = (decimal)Math.Sqrt((double)variance);
+                return (mean, std);
+            }
+        }
+
+        private int _lastStatsBar = -1;
         public enum ColumnType
         {
             [Display(Name = "None")]
@@ -135,6 +179,9 @@ namespace ATAS.Indicators.Technical
         private class MoneyFlowData
         {
             public DateTime Timestamp { get; set; }
+            public Dictionary<string, decimal> ColumnValues { get; set; } = new();
+            
+            // Legacy properties for backward compatibility
             public decimal LastPrice { get; set; }
             public decimal CallMoneyFlow { get; set; }
             public decimal PutMoneyFlow { get; set; }
@@ -162,6 +209,10 @@ namespace ATAS.Indicators.Technical
         // Almacenar Big Trades detectados
         private Dictionary<int, (decimal callDiff, decimal putDiff, decimal netDiff)> _bigTrades = new();
 
+        // Caches para acelerar el cálculo StdDev (por barra)
+        private readonly Dictionary<int, MoneyFlowData?> _barDataCache = new();
+        private readonly Dictionary<ColumnType, RollingStats> _incStats = new();
+
         // ValueDataSeries para renderizar en el panel
         private readonly ValueDataSeries _callFlowSeries = new("CallFlow", "Call Money Flow") 
         { 
@@ -173,11 +224,7 @@ namespace ATAS.Indicators.Technical
             VisualType = VisualMode.Histogram, 
             Color = System.Windows.Media.Colors.IndianRed 
         };
-        private readonly ValueDataSeries _cashNetSeries = new("CashNet", "Cash Net") 
-        { 
-            VisualType = VisualMode.Histogram, 
-            Color = System.Windows.Media.Colors.MediumSeaGreen 
-        };
+        // (Eliminado) Cash Net serie
 
         // Series de incrementos por barra
         private readonly ValueDataSeries _callFlowDeltaSeries = new("CallFlowΔ", "Call Money Flow Δ")
@@ -190,11 +237,7 @@ namespace ATAS.Indicators.Technical
             VisualType = VisualMode.Histogram,
             Color = System.Windows.Media.Colors.Salmon
         };
-        private readonly ValueDataSeries _cashNetDeltaSeries = new("CashNetΔ", "Cash Net Δ")
-        {
-            VisualType = VisualMode.Histogram,
-            Color = System.Windows.Media.Colors.LightGreen
-        };
+        // (Eliminado) Cash Net Δ
 
         // Líneas de niveles (porcentaje de máximos) para Call/Put Flow
         private readonly ValueDataSeries _callLevel100 = new("Call 100%", "Call 100%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.DimGray };
@@ -207,30 +250,7 @@ namespace ATAS.Indicators.Technical
         private readonly ValueDataSeries _putLevel50 = new("Put 50%", "Put 50%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.DarkGray };
         private readonly ValueDataSeries _putLevel25 = new("Put 25%", "Put 25%") { VisualType = VisualMode.Line, Color = System.Windows.Media.Colors.LightGray };
 
-        // Series de análisis Call/Put Flow
-        private readonly ValueDataSeries _flowAnalysisSeries = new("FlowAnalysis", "Call/Put Analysis")
-        {
-            VisualType = VisualMode.Line,
-            Color = System.Windows.Media.Colors.White,
-            Width = 2
-        };
-        private readonly ValueDataSeries _flowDivergenceSeries = new("FlowDivergence", "Flow Divergence")
-        {
-            VisualType = VisualMode.Histogram,
-            Color = System.Windows.Media.Colors.Yellow
-        };
-
-        // Series para análisis de sentimiento
-        private readonly ValueDataSeries _sentimentSeries = new("Sentiment", "Market Sentiment")
-        {
-            VisualType = VisualMode.Histogram,
-            Color = System.Windows.Media.Colors.Cyan
-        };
-        private readonly ValueDataSeries _momentumSeries = new("Momentum", "Flow Momentum")
-        {
-            VisualType = VisualMode.Histogram,
-            Color = System.Windows.Media.Colors.Magenta
-        };
+        // (Eliminado) Series de análisis Call/Put Flow y Sentiment/Momentum
 
         // Series para colorear velas
         private readonly PaintbarsDataSeries _candleColorSeries = new("CandleColors", "Candle Colors")
@@ -248,7 +268,7 @@ namespace ATAS.Indicators.Technical
         private int _timeToleranceMinutes = 10;
         private ColumnType _series1Column = ColumnType.CallMoneyFlow;
         private ColumnType _series2Column = ColumnType.PutMoneyFlow;
-        private ColumnType _series3Column = ColumnType.CashNet;
+        // Series3 eliminado
 
         [Display(GroupName = "0. CSV File", Name = "CSV File Name", Order = 5, Description = "Nombre del archivo CSV (ej: data.csv, UnifiedInstrument.csv)")]
         public string CsvFileName
@@ -314,28 +334,39 @@ namespace ATAS.Indicators.Technical
         public ColumnType Series1Column
         {
             get => _series1Column;
-            set { _series1Column = value; LoadMoneyFlowData(); RecalculateValues(); }
+            set { _series1Column = value; ResetStdDevCache(); LoadMoneyFlowData(); RecalculateValues(); }
         }
 
         [Display(GroupName = "1. Series Selection", Name = "Series 2 Column", Order = 20, Description = "Columna CSV para la serie 2")]
         public ColumnType Series2Column
         {
             get => _series2Column;
-            set { _series2Column = value; LoadMoneyFlowData(); RecalculateValues(); }
+            set { _series2Column = value; ResetStdDevCache(); LoadMoneyFlowData(); RecalculateValues(); }
         }
 
-        [Display(GroupName = "1. Series Selection", Name = "Series 3 Column", Order = 30, Description = "Columna CSV para la serie 3")]
-        public ColumnType Series3Column
-        {
-            get => _series3Column;
-            set { _series3Column = value; LoadMoneyFlowData(); RecalculateValues(); }
-        }
+        // Series3 eliminado
 
         // Big Trade settings
         private bool _showBigTradeMarkers = true;
+        public enum BigTradeThresholdMode
+        {
+            [Display(Name = "Absolute (Millions)")] AbsoluteMillions,
+            [Display(Name = "StdDev (σ)")] StdDev,
+            [Display(Name = "Robust (MAD)")] RobustMad,
+            [Display(Name = "Z-Score Modified")] ZScoreModified,
+            [Display(Name = "IQR (Non-parametric)")] IQR
+        }
+
+        private BigTradeThresholdMode _bigTradeThresholdMode = BigTradeThresholdMode.AbsoluteMillions;
         private decimal _callMoneyFlowThreshold = 1m;
         private decimal _putMoneyFlowThreshold = 1m;
-        private decimal _cashNetThreshold = 1m;
+        // (Eliminado) Cash Net threshold
+        private int _stdDevLookbackBars = 50;
+        private decimal _stdDevMultiplier = 2m;
+        private bool _stdDevUseNegative = true;
+        private decimal _robustMultiplier = 4m;
+        private decimal _zScoreThreshold = 3.5m;
+        private decimal _iqrMultiplier = 1.5m;
         private decimal _callDeltaPositiveThreshold = 0m;
         private decimal _callDeltaNegativeThreshold = 0m;
         private decimal _putDeltaPositiveThreshold = 0m;
@@ -349,8 +380,7 @@ namespace ATAS.Indicators.Technical
         private int _bigTradeFontSize = 8;
         private Color _callMoneyFlowMarkerColor = Color.DodgerBlue;
         private Color _putMoneyFlowMarkerColor = Color.IndianRed;
-        private Color _cashNetMarkerColor = Color.MediumSeaGreen;
-        private Color _cashNetNegativeMarkerColor = Color.Red;
+        // (Eliminado) Cash Net marker colors
         private Color _callDeltaPositiveColor = Color.LightSkyBlue;
         private Color _callDeltaNegativeColor = Color.SteelBlue;
         private Color _putDeltaPositiveColor = Color.Salmon;
@@ -361,6 +391,60 @@ namespace ATAS.Indicators.Technical
         {
             get => _showBigTradeMarkers;
             set { _showBigTradeMarkers = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "Threshold Mode", Order = 15, Description = "Absolute thresholds (millions) or StdDev-based thresholds")]
+        public BigTradeThresholdMode ThresholdMode
+        {
+            get => _bigTradeThresholdMode;
+            set { _bigTradeThresholdMode = value; ResetStdDevCache(); _bigTrades.Clear(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "StdDev Lookback (bars)", Order = 16, Description = "Número de barras para calcular μ/σ de los incrementos")]
+        [Range(10, 500)]
+        public int StdDevLookbackBars
+        {
+            get => _stdDevLookbackBars;
+            set { _stdDevLookbackBars = Math.Clamp(value, 10, 500); ResetStdDevCache(); _bigTrades.Clear(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "StdDev Multiplier (σ)", Order = 17, Description = "2 = ±2σ, 3 = ±3σ")]
+        [Range(1, 5)]
+        public decimal StdDevMultiplier
+        {
+            get => _stdDevMultiplier;
+            set { _stdDevMultiplier = Math.Clamp(value, 1m, 5m); ResetStdDevCache(); _bigTrades.Clear(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "StdDev Include Negative", Order = 18, Description = "Si está activo: detecta ±kσ. Si no: solo +kσ")]
+        public bool StdDevIncludeNegative
+        {
+            get => _stdDevUseNegative;
+            set { _stdDevUseNegative = value; ResetStdDevCache(); _bigTrades.Clear(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "Robust Multiplier (MAD)", Order = 19, Description = "Multiplicador para MAD (ej: 4 = sensible, 6 = estricto)")]
+        [Range(1, 20)]
+        public decimal RobustMultiplier
+        {
+            get => _robustMultiplier;
+            set { _robustMultiplier = Math.Clamp(value, 1m, 20m); ResetStdDevCache(); _bigTrades.Clear(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "Z-Score Threshold", Order = 19, Description = "Umbral Z-Score modificado (típicamente 2.5-3.5, mayor = más estricto)")]
+        [Range(1, 10)]
+        public decimal ZScoreThreshold
+        {
+            get => _zScoreThreshold;
+            set { _zScoreThreshold = Math.Clamp(value, 1m, 10m); ResetStdDevCache(); _bigTrades.Clear(); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "2. Big Trade Filters", Name = "IQR Multiplier", Order = 20, Description = "Multiplicador IQR (típicamente 1.5, mayor = menos sensible)")]
+        [Range(0.5, 5)]
+        public decimal IQRMultiplier
+        {
+            get => _iqrMultiplier;
+            set { _iqrMultiplier = Math.Clamp(value, 0.5m, 5m); ResetStdDevCache(); _bigTrades.Clear(); RecalculateValues(); }
         }
 
         [Display(GroupName = "2. Big Trade Filters", Name = "Call Money Flow Threshold (M)", Order = 20, Description = "En millones (ej: 1 = 1M)")]
@@ -387,17 +471,7 @@ namespace ATAS.Indicators.Technical
             }
         }
 
-        [Display(GroupName = "2. Big Trade Filters", Name = "Cash Net Threshold (M)", Order = 40, Description = "En millones (ej: 1 = 1M)")]
-        public decimal CashNetThreshold
-        {
-            get => _cashNetThreshold;
-            set
-            {
-                _cashNetThreshold = value;
-                _bigTrades.Clear();
-                RecalculateValues();
-            }
-        }
+        // (Eliminado) Cash Net Threshold
 
         [Display(GroupName = "2. Delta Filters", Name = "Call Δ Positive Threshold", Order = 50, Description = "Mínimo incremento de Call Δ para mostrar")]
         public decimal CallDeltaPositiveThreshold
@@ -522,150 +596,41 @@ namespace ATAS.Indicators.Technical
             set { _putMoneyFlowMarkerColor = value; RecalculateValues(); }
         }
 
-        [Display(GroupName = "3. Big Trade Colors", Name = "Cash Net Color", Order = 30)]
-        public Color CashNetMarkerColor
+        // (Eliminado) Cash Net colors
+
+        // Cross Candle Coloring
+        private bool _colorCandlesByCross = true;
+        private Color _crossUpColor = Color.LimeGreen;
+        private Color _crossDownColor = Color.Red;
+
+        [Display(GroupName = "4. Candle Coloring", Name = "Color Candles by Cross", Order = 10, Description = "Colorear velas cuando Series1 cruza Series2")]
+        public bool ColorCandlesByCross
         {
-            get => _cashNetMarkerColor;
-            set { _cashNetMarkerColor = value; RecalculateValues(); }
+            get => _colorCandlesByCross;
+            set { _colorCandlesByCross = value; RecalculateValues(); }
         }
 
-        [Display(GroupName = "3. Big Trade Colors", Name = "Cash Net Negative Color", Order = 40)]
-        public Color CashNetNegativeMarkerColor
+        [Display(GroupName = "4. Candle Coloring", Name = "Cross Up Color", Order = 20, Description = "Color cuando Series1 cruza al alza sobre Series2")]
+        public Color CrossUpColor
         {
-            get => _cashNetNegativeMarkerColor;
-            set { _cashNetNegativeMarkerColor = value; RecalculateValues(); }
+            get => _crossUpColor;
+            set { _crossUpColor = value; RecalculateValues(); }
         }
 
-        // Flow Analysis Display Settings
-        private bool _showFlowAnalysis = true;
-        private bool _colorCandlesByFlow = true;
-
-        [Display(GroupName = "4. Flow Analysis", Name = "Show Flow Info", Order = 10, Description = "Mostrar análisis de Sentiment y Momentum")]
-        public bool ShowFlowAnalysis
+        [Display(GroupName = "4. Candle Coloring", Name = "Cross Down Color", Order = 30, Description = "Color cuando Series2 cruza al alza sobre Series1")]
+        public Color CrossDownColor
         {
-            get => _showFlowAnalysis;
-            set { _showFlowAnalysis = value; RedrawChart(); }
+            get => _crossDownColor;
+            set { _crossDownColor = value; RecalculateValues(); }
         }
-
-        [Display(GroupName = "4. Flow Analysis", Name = "Color Candles by Flow", Order = 20, Description = "Colorear velas según Sentiment/Momentum")]
-        public bool ColorCandlesByFlow
-        {
-            get => _colorCandlesByFlow;
-            set { _colorCandlesByFlow = value; RecalculateValues(); }
-        }
-
-        // Sentiment Color Settings
-        private Color _bullishMomentumColor = Color.Lime;
-        private Color _bullishColor = Color.LimeGreen;
-        private Color _neutralColor = Color.Yellow;
-        private Color _bearishColor = Color.Orange;
-        private Color _bearishMomentumColor = Color.Red;
 
         // Máximos observados para niveles de porcentaje
         private decimal _maxCallFlow = 0m;
         private decimal _maxPutFlow = 0m;
 
-        [Display(GroupName = "5. Sentiment Colors", Name = "Bullish Momentum (> 0.6)", Order = 10, Description = "Color para Calls muy fuertes")]
-        public Color BullishMomentumColor
-        {
-            get => _bullishMomentumColor;
-            set { _bullishMomentumColor = value; RecalculateValues(); }
-        }
+        // (Eliminado) Sentiment colors/thresholds
 
-        [Display(GroupName = "5. Sentiment Colors", Name = "Bullish (0.2 - 0.6)", Order = 20, Description = "Color para Calls moderados")]
-        public Color BullishColor
-        {
-            get => _bullishColor;
-            set { _bullishColor = value; RecalculateValues(); }
-        }
-
-        [Display(GroupName = "5. Sentiment Colors", Name = "Neutral (-0.2 - 0.2)", Order = 30, Description = "Color para equilibrio")]
-        public Color NeutralColor
-        {
-            get => _neutralColor;
-            set { _neutralColor = value; RecalculateValues(); }
-        }
-
-        [Display(GroupName = "5. Sentiment Colors", Name = "Bearish (-0.6 - -0.2)", Order = 40, Description = "Color para Puts moderados")]
-        public Color BearishColor
-        {
-            get => _bearishColor;
-            set { _bearishColor = value; RecalculateValues(); }
-        }
-
-        [Display(GroupName = "5. Sentiment Colors", Name = "Bearish Momentum (< -0.6)", Order = 50, Description = "Color para Puts muy fuertes")]
-        public Color BearishMomentumColor
-        {
-            get => _bearishMomentumColor;
-            set { _bearishMomentumColor = value; RecalculateValues(); }
-        }
-
-        // Sentiment Ratio Thresholds
-        private decimal _sentimentBullishMomentumThreshold = 0.6m;
-        private decimal _sentimentBullishThreshold = 0.2m;
-        private decimal _sentimentNeutralLowThreshold = -0.2m;
-        private decimal _sentimentBearishThreshold = -0.6m;
-
-        [Display(GroupName = "6. Sentiment Thresholds", Name = "Bullish Momentum Threshold", Order = 10, Description = "Valor > para BULLISH MOMENTUM (ej: 0.6)")]
-        [Range(-1.0, 1.0)]
-        public decimal SentimentBullishMomentumThreshold
-        {
-            get => _sentimentBullishMomentumThreshold;
-            set { _sentimentBullishMomentumThreshold = Math.Clamp(value, -1m, 1m); RecalculateValues(); }
-        }
-
-        [Display(GroupName = "6. Sentiment Thresholds", Name = "Bullish Threshold", Order = 20, Description = "Valor > para BULLISH (ej: 0.2)")]
-        [Range(-1.0, 1.0)]
-        public decimal SentimentBullishThreshold
-        {
-            get => _sentimentBullishThreshold;
-            set { _sentimentBullishThreshold = Math.Clamp(value, -1m, 1m); RecalculateValues(); }
-        }
-
-        [Display(GroupName = "6. Sentiment Thresholds", Name = "Neutral Low Threshold", Order = 30, Description = "Valor > para NEUTRAL (ej: -0.2)")]
-        [Range(-1.0, 1.0)]
-        public decimal SentimentNeutralLowThreshold
-        {
-            get => _sentimentNeutralLowThreshold;
-            set { _sentimentNeutralLowThreshold = Math.Clamp(value, -1m, 1m); RecalculateValues(); }
-        }
-
-        [Display(GroupName = "6. Sentiment Thresholds", Name = "Bearish Threshold", Order = 40, Description = "Valor > para BEARISH (ej: -0.6)")]
-        [Range(-1.0, 1.0)]
-        public decimal SentimentBearishThreshold
-        {
-            get => _sentimentBearishThreshold;
-            set { _sentimentBearishThreshold = Math.Clamp(value, -1m, 1m); RecalculateValues(); }
-        }
-
-        // Ratio alert backing fields
-        private decimal _ratioUpperAlert = 1.2m;
-        private decimal _ratioLowerAlert = 0.8m;
-
-        public enum InfoPanelAlignment
-        {
-            [Display(Name = "Left")] Left,
-            [Display(Name = "Center")] Center,
-            [Display(Name = "Right")] Right
-        }
-
-        // Info Panel settings
-        private bool _showInfoPanel = true;
-        private InfoPanelAlignment _infoPanelAlign = InfoPanelAlignment.Right;
-
-        [Display(GroupName = "4. Flow Analysis", Name = "Show Info Panel", Order = 5, Description = "Mostrar panel informativo superior en el gráfico de precio")]
-        public bool ShowInfoPanel
-        {
-            get => _showInfoPanel;
-            set { _showInfoPanel = value; RedrawChart(); }
-        }
-
-        [Display(GroupName = "4. Flow Analysis", Name = "Info Panel Alignment", Order = 6, Description = "Alineación del panel (Izq/Centro/Der)")]
-        public InfoPanelAlignment InfoPanelAlign
-        {
-            get => _infoPanelAlign;
-            set { _infoPanelAlign = value; RedrawChart(); }
-        }
+        // (Eliminado) Info Panel
 
         public MoneyFlow() : base(true)
         {
@@ -674,10 +639,8 @@ namespace ATAS.Indicators.Technical
 
             DataSeries[0] = _callFlowSeries;
             DataSeries.Add(_putFlowSeries);
-            DataSeries.Add(_cashNetSeries);
             DataSeries.Add(_callFlowDeltaSeries);
             DataSeries.Add(_putFlowDeltaSeries);
-            DataSeries.Add(_cashNetDeltaSeries);
             DataSeries.Add(_callLevel100);
             DataSeries.Add(_callLevel75);
             DataSeries.Add(_callLevel50);
@@ -686,10 +649,6 @@ namespace ATAS.Indicators.Technical
             DataSeries.Add(_putLevel75);
             DataSeries.Add(_putLevel50);
             DataSeries.Add(_putLevel25);
-            DataSeries.Add(_flowAnalysisSeries);
-            DataSeries.Add(_flowDivergenceSeries);
-            DataSeries.Add(_sentimentSeries);
-            DataSeries.Add(_momentumSeries);
             DataSeries.Add(_candleColorSeries);
 
             EnableCustomDrawing = true;
@@ -743,26 +702,26 @@ namespace ATAS.Indicators.Technical
                     }
 
                     // Dibujar Cash Net Big Trade
-                    if (netDiff != 0)
-                    {
-                        int y = yPrice + 80;
-                        Color markerColor = netDiff > 0 ? _cashNetMarkerColor : _cashNetNegativeMarkerColor;
-                        DrawBigTradeMarker(context, xBar, y, netDiff, markerColor, font);
-                    }
+                    // (Eliminado) Cash Net Big Trade
                 }
             }
 
-            // Dibujar panel informativo superior
-            if (_showInfoPanel)
-            {
-                DrawInfoPanel(context);
-            }
+            // (Eliminado) Info Panel
         }
 
         private void DrawBigTradeMarker(RenderContext context, int x, int y, decimal value, Color baseColor, RenderFont font)
         {
-            // Convertir thresholds de M a unidades reales para el cálculo del radio
-            decimal minThreshold = Math.Min(_callMoneyFlowThreshold, Math.Min(_putMoneyFlowThreshold, _cashNetThreshold)) * 1_000_000m;
+            // Calcular threshold según modo: en Absolute usa M × 1M, en StdDev/MAD usa directamente el diff
+            decimal minThreshold = 0m;
+            if (_bigTradeThresholdMode == BigTradeThresholdMode.AbsoluteMillions)
+            {
+                minThreshold = Math.Min(_callMoneyFlowThreshold, _putMoneyFlowThreshold) * 1_000_000m;
+            }
+            else
+            {
+                // En StdDev/MAD, el threshold ya está implícito en la detección, usar 0 para radio escala simple
+                minThreshold = 0m;
+            }
             
             int radius = _bigTradeBaseRadius + (int)Math.Round((double)((Math.Abs(value) - minThreshold) * _bigTradeRadiusPerUnit));
             radius = Math.Clamp(radius, _bigTradeBaseRadius, _bigTradeMaxRadius);
@@ -789,105 +748,7 @@ namespace ATAS.Indicators.Technical
             }
         }
 
-        private void DrawInfoPanel(RenderContext context)
-        {
-            if (ChartInfo?.PriceChartContainer == null)
-                return;
-
-            int lastBar = LastVisibleBarNumber;
-            if (lastBar < 0)
-                return;
-
-            // Últimos valores de las series
-            decimal sentiment = _sentimentSeries.Count > lastBar ? _sentimentSeries[lastBar] : 0m;
-            decimal momentum = _momentumSeries.Count > lastBar ? _momentumSeries[lastBar] : 0m;
-            decimal callFlow = _callFlowSeries.Count > lastBar ? _callFlowSeries[lastBar] : 0m;
-            decimal putFlow = _putFlowSeries.Count > lastBar ? _putFlowSeries[lastBar] : 0m;
-            decimal cashNet = _cashNetSeries.Count > lastBar ? _cashNetSeries[lastBar] : 0m;
-
-            // Cálculos adicionales
-            decimal totalFlow = callFlow + putFlow;
-            decimal callPct = totalFlow != 0 ? callFlow / totalFlow : 0m;
-            decimal putPct = totalFlow != 0 ? putFlow / totalFlow : 0m;
-
-            // Ratio Serie1/Serie2 (Call/Put)
-            decimal ratio = putFlow != 0 ? callFlow / putFlow : 0m;
-
-            // Cambio de CashNet respecto a la barra anterior visible
-            decimal cashNetChange = 0m;
-            if (lastBar > FirstVisibleBarNumber)
-            {
-                int prevBar = lastBar - 1;
-                decimal prevCash = _cashNetSeries.Count > prevBar ? _cashNetSeries[prevBar] : 0m;
-                cashNetChange = cashNet - prevCash;
-            }
-
-            // Texto principal (sin ratio coloreado aún)
-            string baseText =
-                $"Sent {sentiment:F2}    |    Mom {momentum:F2}    |    Call {FormatCompactRounded(callFlow)} ({callPct:P0})    " +
-                $"Put {FormatCompactRounded(putFlow)} ({putPct:P0})    |    Net {FormatCompactRounded(cashNet)}    ΔNet {FormatCompactRounded(cashNetChange)}";
-
-            // Indicadores de alerta por ratio
-            bool highAlert = ratio >= _ratioUpperAlert && _ratioUpperAlert > 0;
-            bool lowAlert = ratio <= _ratioLowerAlert && _ratioLowerAlert > 0;
-
-            string alertText = string.Empty;
-            if (highAlert)
-                alertText += "    [R↑]";
-            if (lowAlert)
-                alertText += "    [R↓]";
-
-            string text = baseText + alertText;
-
-            var font = new RenderFont("Segoe UI", 10, FontStyle.Regular);
-            int textWidth = EstimateTextWidth(text, font);
-            int paddingH = 10;
-            int panelWidth = textWidth + paddingH * 2;
-            int panelHeight = 22;
-
-            var priceRegion = ChartInfo.PriceChartContainer.Region;
-
-            int x;
-            switch (_infoPanelAlign)
-            {
-                case InfoPanelAlignment.Left:
-                    x = priceRegion.Left + 10;
-                    break;
-                case InfoPanelAlignment.Center:
-                    x = priceRegion.Left + (priceRegion.Width - panelWidth) / 2;
-                    break;
-                case InfoPanelAlignment.Right:
-                default:
-                    x = priceRegion.Right - panelWidth - 10;
-                    break;
-            }
-
-            int y = priceRegion.Top + 8;
-
-            var rect = new System.Drawing.Rectangle(x, y, panelWidth, panelHeight);
-
-            // Fondo semi-transparente minimalista
-            var backColor = System.Drawing.Color.FromArgb(180, 20, 20, 20);
-            var borderColor = System.Drawing.Color.FromArgb(220, 80, 80, 80);
-            var textColor = System.Drawing.Color.White;
-
-            context.FillRectangle(backColor, rect);
-            context.DrawRectangle(new RenderPen(borderColor, 1), rect);
-
-            int textX = x + paddingH;
-            int textY = y + (panelHeight - (int)font.Size) / 2;
-
-            // Dibujar texto base
-            context.DrawString(text, font, textColor, textX, textY);
-
-            // Dibujar ratio al final del panel, destacado y coloreado
-            string ratioLabel = $"R {ratio:F2}";
-            var ratioColor = ratio >= 1m ? System.Drawing.Color.LimeGreen : System.Drawing.Color.IndianRed;
-            int ratioWidth = EstimateTextWidth(ratioLabel, font);
-            int ratioX = rect.Right - ratioWidth - paddingH;
-
-            context.DrawString(ratioLabel, font, ratioColor, ratioX, textY);
-        }
+        // (Eliminado) DrawInfoPanel
 
         private static int EstimateTextWidth(string text, RenderFont font)
         {
@@ -928,11 +789,13 @@ namespace ATAS.Indicators.Technical
             // Buscar dato más cercano por timestamp usando tolerancia configurable
             var closestData = FindClosestDataByTime(barTimeInCsvZone);
 
+            // Cache por barra para acelerar cálculos posteriores
+            _barDataCache[bar] = closestData;
+
             if (closestData != null)
             {
                 _callFlowSeries[bar] = closestData.CallMoneyFlow;
                 _putFlowSeries[bar] = closestData.PutMoneyFlow;
-                _cashNetSeries[bar] = closestData.CashNet;
 
                 // Incrementos por barra (delta respecto a la barra anterior)
                 if (bar > 0)
@@ -946,7 +809,6 @@ namespace ATAS.Indicators.Technical
                         {
                             var callDelta = closestData.CallMoneyFlow - prevDataForDelta.CallMoneyFlow;
                             var putDelta = closestData.PutMoneyFlow - prevDataForDelta.PutMoneyFlow;
-                            _cashNetDeltaSeries[bar] = closestData.CashNet - prevDataForDelta.CashNet;
 
                             // Filtros y colores para Call Δ
                             decimal filteredCallDelta = 0m;
@@ -985,18 +847,16 @@ namespace ATAS.Indicators.Technical
                     }
                 }
 
-                // Análisis Call/Put Flow
-                decimal callFlow = closestData.CallMoneyFlow;
-                decimal putFlow = closestData.PutMoneyFlow;
-                decimal totalFlow = callFlow + putFlow;
+                // Series1 y Series2 (para niveles/cross) usan las columnas configuradas
+                decimal series1 = _callFlowSeries[bar];
+                decimal series2 = _putFlowSeries[bar];
 
-                // Actualizar máximos para líneas de porcentaje
-                if (callFlow > _maxCallFlow)
-                    _maxCallFlow = callFlow;
-                if (putFlow > _maxPutFlow)
-                    _maxPutFlow = putFlow;
+                // Actualizar máximos para líneas de porcentaje (en base a Series1/Series2 actuales)
+                if (series1 > _maxCallFlow)
+                    _maxCallFlow = series1;
+                if (series2 > _maxPutFlow)
+                    _maxPutFlow = series2;
 
-                // Setear líneas de niveles por barra
                 _callLevel100[bar] = _maxCallFlow;
                 _callLevel75[bar] = _maxCallFlow * 0.75m;
                 _callLevel50[bar] = _maxCallFlow * 0.50m;
@@ -1006,17 +866,10 @@ namespace ATAS.Indicators.Technical
                 _putLevel75[bar] = _maxPutFlow * 0.75m;
                 _putLevel50[bar] = _maxPutFlow * 0.50m;
                 _putLevel25[bar] = _maxPutFlow * 0.25m;
-                
-                // Ratio Call/Put (0-1: dominance scale)
-                if (totalFlow != 0)
-                {
-                    _flowAnalysisSeries[bar] = callFlow / totalFlow;
-                }
-                
-                // Divergencia (diferencia normalizada)
-                _flowDivergenceSeries[bar] = callFlow - putFlow;
 
                 // Detectar Big Trades comparando con barra anterior
+                // Importante: StdDev usa rolling-stats incremental (rápido)
+                // MAD usa mediana/MAD por barra (más costoso). Evitamos recalcular dos veces el mismo bar.
                 if (_showBigTradeMarkers && bar > 0)
                 {
                     var prevCandle = GetCandle(bar - 1);
@@ -1027,60 +880,173 @@ namespace ATAS.Indicators.Technical
 
                         if (prevData != null)
                         {
+                            // Para Absolute, usar siempre Call/Put Money Flow
+                            // Para modos científicos, usar las Series seleccionadas
                             decimal callDiff = closestData.CallMoneyFlow - prevData.CallMoneyFlow;
                             decimal putDiff = closestData.PutMoneyFlow - prevData.PutMoneyFlow;
-                            decimal netDiff = closestData.CashNet - prevData.CashNet;
 
-                            // Convertir thresholds de M a unidades reales (M = 1,000,000)
-                            decimal callThreshold = _callMoneyFlowThreshold * 1_000_000m;
-                            decimal putThreshold = _putMoneyFlowThreshold * 1_000_000m;
-                            decimal netThreshold = _cashNetThreshold * 1_000_000m;
+                            bool hasCallTrade;
+                            bool hasPutTrade;
+                            bool hasNetTrade = false;
 
-                            // Solo considerar incrementos positivos de flujo (no reducciones)
-                            bool hasCallTrade = callDiff >= callThreshold;
-                            bool hasPutTrade = putDiff >= putThreshold;
-                            bool hasNetTrade = netDiff >= netThreshold;
-
-                            if (hasCallTrade || hasPutTrade || hasNetTrade)
+                            if (_bigTradeThresholdMode == BigTradeThresholdMode.StdDev)
                             {
+                                var k = _stdDevMultiplier;
+
+                                // StdDev por columna seleccionada (Series1/Series2).
+                                var col1 = _series1Column;
+                                var col2 = _series2Column;
+
+                                // Solo actualizar una vez por barra para no quedarse "pensando"
+                                UpdateIncStatsIfNeeded(bar, instrumentTimeZoneOffset);
+
+                                var (m1, s1) = GetIncMeanStd(col1);
+                                var (m2, s2) = GetIncMeanStd(col2);
+
+                                // diff = value(b) - value(b-1)
+                                var d1 = CalcDiffForColumn(closestData, prevData, col1);
+                                var d2 = CalcDiffForColumn(closestData, prevData, col2);
+
+                                bool pass1;
+                                bool pass2;
+
+                                // Si todavía no hay σ suficiente (pocas observaciones) no marcamos.
+                                if (_stdDevUseNegative)
+                                {
+                                    pass1 = s1 > 0 && (d1 >= m1 + k * s1 || d1 <= m1 - k * s1);
+                                    pass2 = s2 > 0 && (d2 >= m2 + k * s2 || d2 <= m2 - k * s2);
+                                }
+                                else
+                                {
+                                    pass1 = d1 > 0 && (s1 > 0 ? d1 >= m1 + k * s1 : d1 > m1);
+                                    pass2 = d2 > 0 && (s2 > 0 ? d2 >= m2 + k * s2 : d2 > m2);
+                                }
+
+                                // Se dibuja con los diffs Call/Put (slots existentes)
+                                hasCallTrade = pass1;
+                                hasPutTrade = pass2;
+                            }
+                            else if (_bigTradeThresholdMode == BigTradeThresholdMode.RobustMad)
+                            {
+                                // Alternativa robusta: MAD sobre incrementos (menos sensible a outliers que σ)
+                                var col1 = _series1Column;
+                                var col2 = _series2Column;
+                                var k = _robustMultiplier;
+
+                                var d1 = CalcDiffForColumn(closestData, prevData, col1);
+                                var d2 = CalcDiffForColumn(closestData, prevData, col2);
+
+                                var (med1, mad1) = CalcMedianMadIncrement(bar, col1, instrumentTimeZoneOffset);
+                                var (med2, mad2) = CalcMedianMadIncrement(bar, col2, instrumentTimeZoneOffset);
+
+                                // threshold = median + k * MAD (MAD=median(|x-median|))
+                                // Si MAD=0 (serie muy plana) usamos fallback a "diff != med" para poder detectar spikes.
+                                if (_stdDevUseNegative)
+                                {
+                                    hasCallTrade = mad1 > 0
+                                        ? (d1 >= med1 + k * mad1 || d1 <= med1 - k * mad1)
+                                        : (d1 != med1);
+                                    hasPutTrade = mad2 > 0
+                                        ? (d2 >= med2 + k * mad2 || d2 <= med2 - k * mad2)
+                                        : (d2 != med2);
+                                }
+                                else
+                                {
+                                    hasCallTrade = d1 > 0 && (mad1 > 0 ? d1 >= med1 + k * mad1 : d1 > med1);
+                                    hasPutTrade = d2 > 0 && (mad2 > 0 ? d2 >= med2 + k * mad2 : d2 > med2);
+                                }
+                            }
+                            else if (_bigTradeThresholdMode == BigTradeThresholdMode.ZScoreModified)
+                            {
+                                // Z-Score modificado: mejor para datos con colas pesadas
+                                // modZ = 0.6745 * |value - median| / MAD
+                                var col1 = _series1Column;
+                                var col2 = _series2Column;
+
+                                var d1 = CalcDiffForColumn(closestData, prevData, col1);
+                                var d2 = CalcDiffForColumn(closestData, prevData, col2);
+
+                                var (med1, mad1) = CalcMedianMadIncrement(bar, col1, instrumentTimeZoneOffset);
+                                var (med2, mad2) = CalcMedianMadIncrement(bar, col2, instrumentTimeZoneOffset);
+
+                                // Factor de normalización MAD
+                                const decimal K = 0.6745m;
+                                
+                                decimal modZ1 = mad1 > 0 ? K * Math.Abs(d1 - med1) / mad1 : 0m;
+                                decimal modZ2 = mad2 > 0 ? K * Math.Abs(d2 - med2) / mad2 : 0m;
+
+                                hasCallTrade = modZ1 > _zScoreThreshold;
+                                hasPutTrade = modZ2 > _zScoreThreshold;
+                            }
+                            else if (_bigTradeThresholdMode == BigTradeThresholdMode.IQR)
+                            {
+                                // IQR (Interquartile Range): no paramétrico, robusto a outliers
+                                var col1 = _series1Column;
+                                var col2 = _series2Column;
+
+                                var d1 = CalcDiffForColumn(closestData, prevData, col1);
+                                var d2 = CalcDiffForColumn(closestData, prevData, col2);
+
+                                var (q1_1, q3_1, iqr1) = CalcIQRIncrement(bar, col1, instrumentTimeZoneOffset);
+                                var (q1_2, q3_2, iqr2) = CalcIQRIncrement(bar, col2, instrumentTimeZoneOffset);
+
+                                decimal lower1 = q1_1 - _iqrMultiplier * iqr1;
+                                decimal upper1 = q3_1 + _iqrMultiplier * iqr1;
+                                decimal lower2 = q1_2 - _iqrMultiplier * iqr2;
+                                decimal upper2 = q3_2 + _iqrMultiplier * iqr2;
+
+                                hasCallTrade = d1 < lower1 || d1 > upper1;
+                                hasPutTrade = d2 < lower2 || d2 > upper2;
+                            }
+                            else
+                            {
+                                // Convertir thresholds de M a unidades reales (M = 1,000,000)
+                                decimal callThreshold = _callMoneyFlowThreshold * 1_000_000m;
+                                decimal putThreshold = _putMoneyFlowThreshold * 1_000_000m;
+                                // Solo considerar incrementos positivos de flujo (no reducciones)
+                                hasCallTrade = callDiff >= callThreshold;
+                                hasPutTrade = putDiff >= putThreshold;
+                                hasNetTrade = false;
+                            }
+
+                            if (hasCallTrade || hasPutTrade)
+                            {
+                                // Para Absolute: usar callDiff/putDiff (Money Flow)
+                                // Para científicos: usar los diffs de Series detectados
+                                decimal storCallDiff = callDiff;
+                                decimal storPutDiff = putDiff;
+
+                                if (_bigTradeThresholdMode != BigTradeThresholdMode.AbsoluteMillions)
+                                {
+                                    // En modos científicos, recalcular para guardar los valores correctos
+                                    var col1 = _series1Column;
+                                    var col2 = _series2Column;
+                                    storCallDiff = CalcDiffForColumn(closestData, prevData, col1);
+                                    storPutDiff = CalcDiffForColumn(closestData, prevData, col2);
+                                }
+
                                 _bigTrades[bar] = (
-                                    hasCallTrade ? callDiff : 0,
-                                    hasPutTrade ? putDiff : 0,
-                                    hasNetTrade ? netDiff : 0
+                                    hasCallTrade ? storCallDiff : 0,
+                                    hasPutTrade ? storPutDiff : 0,
+                                    0
                                 );
                             }
 
-                            // Análisis de Sentimiento y Momentum (4 escenarios)
-                            decimal callRateChange = prevData.CallMoneyFlow != 0 ? (callDiff / prevData.CallMoneyFlow) : 0;
-                            decimal putRateChange = prevData.PutMoneyFlow != 0 ? (putDiff / prevData.PutMoneyFlow) : 0;
-
-                            bool callRising = callDiff > 0;
-                            bool putRising = putDiff > 0;
-                            decimal momentumStrength = Math.Abs(callRateChange) + Math.Abs(putRateChange);
-
-                            // Sentiment: -1 (bajista) a +1 (alcista)
-                            decimal sentiment = (callFlow - putFlow) / (totalFlow == 0 ? 1 : totalFlow);
-                            _sentimentSeries[bar] = sentiment;
-
-                            // Momentum: velocidad de cambio
-                            _momentumSeries[bar] = momentumStrength;
+                            // (Eliminado) Sentiment/Momentum
                         }
                     }
                 }
 
-                // Colorear vela según sentimiento si está habilitado
-                if (_colorCandlesByFlow)
+                // Colorear vela según relación Series1/Series2 (persistente)
+                if (_colorCandlesByCross && bar > 0)
                 {
-                    decimal sentiment = _sentimentSeries[bar];
-                    Color candleColor = GetSentimentColor(sentiment);
-                    // Convertir System.Drawing.Color a System.Windows.Media.Color
-                    var mediaColor = System.Windows.Media.Color.FromArgb(
-                        candleColor.A, 
-                        candleColor.R, 
-                        candleColor.G, 
-                        candleColor.B
-                    );
-                    _candleColorSeries[bar] = mediaColor;
+                    var curS1 = _callFlowSeries[bar];
+                    var curS2 = _putFlowSeries[bar];
+
+                    if (curS1 > curS2)
+                        _candleColorSeries[bar] = ToMediaColor(_crossUpColor);
+                    else if (curS2 > curS1)
+                        _candleColorSeries[bar] = ToMediaColor(_crossDownColor);
                 }
 
             }
@@ -1113,6 +1079,7 @@ namespace ATAS.Indicators.Technical
                 _data.Clear();
                 _dataByTimestamp.Clear();
                 _error = string.Empty;
+                ResetStdDevCache();
 
                 if (string.IsNullOrWhiteSpace(_selectedCsvFile))
                 {
@@ -1151,14 +1118,10 @@ namespace ATAS.Indicators.Technical
 
                 var headers = SplitCsvLine(lines[0]);
                 
-                // Buscar índices de tiempo y columnas seleccionadas
+                // Buscar índice de tiempo
                 int idxTime = FindIndex(headers, "iso_time");
                 if (idxTime < 0)
                     idxTime = FindIndex(headers, "timestamp_ms");
-
-                int idxSeries1 = _series1Column != ColumnType.None ? FindIndexByColumn(headers, _series1Column) : -1;
-                int idxSeries2 = _series2Column != ColumnType.None ? FindIndexByColumn(headers, _series2Column) : -1;
-                int idxSeries3 = _series3Column != ColumnType.None ? FindIndexByColumn(headers, _series3Column) : -1;
 
                 if (idxTime < 0)
                 {
@@ -1166,22 +1129,20 @@ namespace ATAS.Indicators.Technical
                     return;
                 }
 
-                // Al menos una serie debe estar seleccionada
-                if (idxSeries1 < 0 && idxSeries2 < 0 && idxSeries3 < 0)
+                // Crear mapeo de columnas (nombre normalizado -> índice)
+                var columnMap = new Dictionary<string, int>();
+                for (int i = 0; i < headers.Length; i++)
                 {
-                    _error = "Select at least one column for the series";
-                    return;
+                    string normalized = NormalizeColumnName(headers[i]);
+                    columnMap[normalized] = i;
                 }
 
+                // Cargar todas las filas
                 for (int i = 1; i < lines.Length; i++)
                 {
                     var cols = SplitCsvLine(lines[i]);
                     if (cols.Length <= idxTime)
                         continue;
-
-                    decimal series1Val = idxSeries1 >= 0 && idxSeries1 < cols.Length && TryParseDecimal(cols[idxSeries1], out var s1) ? s1 : 0;
-                    decimal series2Val = idxSeries2 >= 0 && idxSeries2 < cols.Length && TryParseDecimal(cols[idxSeries2], out var s2) ? s2 : 0;
-                    decimal series3Val = idxSeries3 >= 0 && idxSeries3 < cols.Length && TryParseDecimal(cols[idxSeries3], out var s3) ? s3 : 0;
 
                     DateTime timestamp = DateTime.Now;
                     if (!TryParseDateTime(cols[idxTime], out timestamp))
@@ -1192,12 +1153,53 @@ namespace ATAS.Indicators.Technical
 
                     var data = new MoneyFlowData
                     {
-                        Timestamp = timestamp,
-                        LastPrice = series1Val,
-                        CallMoneyFlow = series1Val,
-                        PutMoneyFlow = series2Val,
-                        CashNet = series3Val
+                        Timestamp = timestamp
                     };
+
+                    // Cargar TODAS las columnas en el diccionario dinámico
+                    foreach (var kvp in columnMap)
+                    {
+                        string columnName = kvp.Key;
+                        int colIdx = kvp.Value;
+                        if (colIdx < cols.Length && TryParseDecimal(cols[colIdx], out var value))
+                        {
+                            data.ColumnValues[columnName] = value;
+                        }
+                    }
+
+                    // También rellenar propiedades legacy para compatibilidad hacia atrás
+                    if (data.ColumnValues.TryGetValue("call_money_flow", out var cmf))
+                        data.CallMoneyFlow = cmf;
+                    if (data.ColumnValues.TryGetValue("put_money_flow", out var pmf))
+                        data.PutMoneyFlow = pmf;
+                    if (data.ColumnValues.TryGetValue("call_delta_flow", out var cdf))
+                        data.CallDeltaFlow = cdf;
+                    if (data.ColumnValues.TryGetValue("put_delta_flow", out var pdf))
+                        data.PutDeltaFlow = pdf;
+                    if (data.ColumnValues.TryGetValue("call_iv_flow", out var cif))
+                        data.CallIvFlow = cif;
+                    if (data.ColumnValues.TryGetValue("put_iv_flow", out var pif))
+                        data.PutIvFlow = pif;
+                    if (data.ColumnValues.TryGetValue("call_vanna_flow", out var cvf))
+                        data.CallVannaFlow = cvf;
+                    if (data.ColumnValues.TryGetValue("put_vanna_flow", out var pvf))
+                        data.PutVannaFlow = pvf;
+                    if (data.ColumnValues.TryGetValue("call_charm", out var cc))
+                        data.CallCharm = cc;
+                    if (data.ColumnValues.TryGetValue("put_charm", out var pc))
+                        data.PutCharm = pc;
+                    if (data.ColumnValues.TryGetValue("call_hedge_pressure", out var chp))
+                        data.CallHedgePressure = chp;
+                    if (data.ColumnValues.TryGetValue("put_hedge_pressure", out var php))
+                        data.PutHedgePressure = php;
+                    if (data.ColumnValues.TryGetValue("call_smart_money", out var csm))
+                        data.CallSmartMoney = csm;
+                    if (data.ColumnValues.TryGetValue("put_smart_money", out var psm))
+                        data.PutSmartMoney = psm;
+                    if (data.ColumnValues.TryGetValue("cash_net", out var cn))
+                        data.CashNet = cn;
+                    if (data.ColumnValues.TryGetValue("last_price", out var lp))
+                        data.LastPrice = lp;
 
                     _data.Add(data);
                     _dataByTimestamp[timestamp] = data;
@@ -1210,6 +1212,19 @@ namespace ATAS.Indicators.Technical
             {
                 _error = $"Error parsing CSV: {ex.Message}";
             }
+        }
+
+        private static string NormalizeColumnName(string columnName)
+        {
+            if (string.IsNullOrWhiteSpace(columnName))
+                return "";
+            
+            // Convertir a minúsculas y reemplazar espacios/guiones con guiones bajos
+            return new string(columnName
+                .ToLowerInvariant()
+                .Where(c => char.IsLetterOrDigit(c) || c == '_' || c == '-')
+                .Select(c => c == '-' ? '_' : c)
+                .ToArray());
         }
 
         private void RefreshAvailableCsvFiles()
@@ -1388,14 +1403,319 @@ namespace ATAS.Indicators.Technical
             return System.Windows.Media.Color.FromArgb(color.A, color.R, color.G, color.B);
         }
 
-        private Color GetSentimentColor(decimal sentiment)
+        private (decimal mean, decimal stdDev) CalcMeanStdDevIncrement(int bar, Func<MoneyFlowData, decimal> selector)
         {
-            // Sentiment: -1 (Bajista) a +1 (Alcista)
-            if (sentiment > _sentimentBullishMomentumThreshold) return _bullishMomentumColor;
-            if (sentiment > _sentimentBullishThreshold) return _bullishColor;
-            if (sentiment > _sentimentNeutralLowThreshold) return _neutralColor;
-            if (sentiment > _sentimentBearishThreshold) return _bearishColor;
-            return _bearishMomentumColor;
+            int instrumentTimeZoneOffset = InstrumentInfo?.TimeZone ?? 0;
+
+            int startBar = Math.Max(1, bar - _stdDevLookbackBars);
+            int n = 0;
+            decimal sum = 0m;
+            decimal sumSq = 0m;
+
+            for (int b = startBar; b <= bar; b++)
+            {
+                var c0 = GetCandle(b);
+                var c1 = GetCandle(b - 1);
+                if (c0 == null || c1 == null)
+                    continue;
+
+                var t0 = c0.Time.AddHours(instrumentTimeZoneOffset).AddHours(_gmtOffset);
+                var t1 = c1.Time.AddHours(instrumentTimeZoneOffset).AddHours(_gmtOffset);
+
+                var d0 = FindClosestDataByTime(t0);
+                var d1 = FindClosestDataByTime(t1);
+                if (d0 == null || d1 == null)
+                    continue;
+
+                var diff = selector(d0) - selector(d1);
+                n++;
+                sum += diff;
+                sumSq += diff * diff;
+            }
+
+            if (n < 2)
+                return (0m, 0m);
+
+            var mean = sum / n;
+            var variance = (sumSq / n) - (mean * mean);
+            if (variance < 0)
+                variance = 0;
+
+            var std = (decimal)Math.Sqrt((double)variance);
+            return (mean, std);
+        }
+
+        private static Func<MoneyFlowData, decimal> GetSelectorForColumn(ColumnType column)
+        {
+            return column switch
+            {
+                ColumnType.LastPrice => d => d.LastPrice,
+                ColumnType.CallMoneyFlow => d => d.CallMoneyFlow,
+                ColumnType.PutMoneyFlow => d => d.PutMoneyFlow,
+                ColumnType.CashNet => d => d.CashNet,
+                ColumnType.CallDeltaFlow => d => d.CallDeltaFlow,
+                ColumnType.PutDeltaFlow => d => d.PutDeltaFlow,
+                ColumnType.CallIvFlow => d => d.CallIvFlow,
+                ColumnType.PutIvFlow => d => d.PutIvFlow,
+                ColumnType.CallVannaFlow => d => d.CallVannaFlow,
+                ColumnType.PutVannaFlow => d => d.PutVannaFlow,
+                ColumnType.CallCharm => d => d.CallCharm,
+                ColumnType.PutCharm => d => d.PutCharm,
+                ColumnType.CallHedgePressure => d => d.CallHedgePressure,
+                ColumnType.PutHedgePressure => d => d.PutHedgePressure,
+                ColumnType.CallSmartMoney => d => d.CallSmartMoney,
+                ColumnType.PutSmartMoney => d => d.PutSmartMoney,
+                _ => d => 0m
+            };
+        }
+
+        private decimal GetColumnValue(MoneyFlowData data, ColumnType column)
+        {
+            // Primero intenta usar propiedades legacy (más rápido)
+            var legacyValue = GetSelectorForColumn(column)(data);
+            if (legacyValue != 0m)
+                return legacyValue;
+
+            // Si no hay valor legacy, busca en el diccionario dinámico
+            string columnName = FindColumnNameByType(column);
+            if (!string.IsNullOrEmpty(columnName) && data.ColumnValues.TryGetValue(columnName, out var value))
+                return value;
+
+            return 0m;
+        }
+
+        private string FindColumnNameByType(ColumnType column)
+        {
+            return column switch
+            {
+                ColumnType.None => "",
+                ColumnType.LastPrice => "last_price",
+                ColumnType.CallMoneyFlow => "call_money_flow",
+                ColumnType.PutMoneyFlow => "put_money_flow",
+                ColumnType.MfRatio => "mf_ratio",
+                ColumnType.CashNet => "cash_net",
+                ColumnType.CallDeltaFlow => "call_delta_flow",
+                ColumnType.PutDeltaFlow => "put_delta_flow",
+                ColumnType.DfRatio => "df_ratio",
+                ColumnType.DeltaCall => "delta_call",
+                ColumnType.DeltaPut => "delta_put",
+                ColumnType.DeltaNet => "delta_net",
+                ColumnType.CallIvFlow => "call_iv_flow",
+                ColumnType.PutIvFlow => "put_iv_flow",
+                ColumnType.IvfRatio => "ivf_ratio",
+                ColumnType.CallOtmImpact => "call_otm_impact",
+                ColumnType.PutOtmImpact => "put_otm_impact",
+                ColumnType.CallItmImpact => "call_itm_impact",
+                ColumnType.PutItmImpact => "put_itm_impact",
+                ColumnType.CallGex => "call_gex",
+                ColumnType.PutGex => "put_gex",
+                ColumnType.NetGex => "net_gex",
+                ColumnType.CallVannaFlow => "call_vanna_flow",
+                ColumnType.PutVannaFlow => "put_vanna_flow",
+                ColumnType.VannaRatio => "vanna_ratio",
+                ColumnType.CallCharm => "call_charm",
+                ColumnType.PutCharm => "put_charm",
+                ColumnType.CharmPressure => "charm_pressure",
+                ColumnType.CallIvFlowItm => "call_iv_flow_itm",
+                ColumnType.PutIvFlowItm => "put_iv_flow_itm",
+                ColumnType.CallIvFlowOtm => "call_iv_flow_otm",
+                ColumnType.PutIvFlowOtm => "put_iv_flow_otm",
+                ColumnType.IvNet => "iv_net",
+                ColumnType.CallVolImbalance => "call_vol_imbalance",
+                ColumnType.PutVolImbalance => "put_vol_imbalance",
+                ColumnType.VolImbalanceRatio => "vol_imbalance_ratio",
+                ColumnType.CallSmartMoney => "call_smart_money",
+                ColumnType.PutSmartMoney => "put_smart_money",
+                ColumnType.SmartMoneyRatio => "smart_money_ratio",
+                ColumnType.CallHedgePressure => "call_hedge_pressure",
+                ColumnType.PutHedgePressure => "put_hedge_pressure",
+                ColumnType.NetHedgePressure => "net_hedge_pressure",
+                ColumnType.SkewPressure => "skew_pressure",
+                ColumnType.SkewIntensity => "skew_intensity",
+                ColumnType.PremiumFlow => "premium_flow",
+                ColumnType.CallPremium => "call_premium",
+                ColumnType.PutPremium => "put_premium",
+                ColumnType.Volume => "volume",
+                ColumnType.CallVolume => "call_volume",
+                ColumnType.PutVolume => "put_volume",
+                ColumnType.OpenInterest => "open_interest",
+                ColumnType.CallOpenInterest => "call_open_interest",
+                ColumnType.PutOpenInterest => "put_open_interest",
+                ColumnType.ImpliedVolatility => "implied_volatility",
+                ColumnType.CallIv => "call_iv",
+                ColumnType.PutIv => "put_iv",
+                _ => ""
+            };
+        }
+
+        private decimal CalcDiffForColumn(MoneyFlowData current, MoneyFlowData previous, ColumnType column)
+        {
+            string columnName = FindColumnNameByType(column);
+            
+            // Intentar obtener del diccionario dinámico primero
+            if (!string.IsNullOrEmpty(columnName))
+            {
+                bool hasCurrent = current.ColumnValues.TryGetValue(columnName, out var currVal);
+                bool hasPrevious = previous.ColumnValues.TryGetValue(columnName, out var prevVal);
+                
+                if (hasCurrent && hasPrevious)
+                    return currVal - prevVal;
+            }
+
+            // Fallback a propiedades legacy para compatibilidad hacia atrás
+            var selector = GetSelectorForColumn(column);
+            return selector(current) - selector(previous);
+        }
+
+        private void ResetStdDevCache()
+        {
+            _incStats.Clear();
+            _barDataCache.Clear();
+            _lastStatsBar = -1;
+        }
+
+        private (decimal mean, decimal stdDev) GetIncMeanStd(ColumnType column)
+        {
+            if (!_incStats.TryGetValue(column, out var stats))
+                return (0m, 0m);
+            return stats.GetMeanStdDev();
+        }
+
+        private void UpdateIncStatsIfNeeded(int bar, int instrumentTimeZoneOffset)
+        {
+            if (bar <= 0)
+                return;
+
+            // Si retrocedieron barras (recalc), reiniciar para evitar bucles largos
+            if (_lastStatsBar > bar)
+                _lastStatsBar = -1;
+
+            var from = Math.Max(1, _lastStatsBar + 1);
+            if (from > bar)
+                return;
+
+            for (int b = from; b <= bar; b++)
+            {
+                var d0 = TryGetBarData(b, instrumentTimeZoneOffset);
+                var d1 = TryGetBarData(b - 1, instrumentTimeZoneOffset);
+                if (d0 == null || d1 == null)
+                    continue;
+
+                var c1 = _series1Column;
+                var c2 = _series2Column;
+
+                PushInc(c1, CalcDiffForColumn(d0, d1, c1));
+                PushInc(c2, CalcDiffForColumn(d0, d1, c2));
+            }
+
+            _lastStatsBar = bar;
+        }
+
+        private void PushInc(ColumnType column, decimal inc)
+        {
+            if (!_incStats.TryGetValue(column, out var stats))
+            {
+                stats = new RollingStats();
+                _incStats[column] = stats;
+            }
+            stats.Push(inc, _stdDevLookbackBars);
+        }
+
+        private MoneyFlowData? TryGetBarData(int bar, int instrumentTimeZoneOffset)
+        {
+            if (bar < 0)
+                return null;
+
+            if (_barDataCache.TryGetValue(bar, out var cached))
+                return cached;
+
+            var candle = GetCandle(bar);
+            if (candle == null)
+            {
+                _barDataCache[bar] = null;
+                return null;
+            }
+
+            var t = candle.Time.AddHours(instrumentTimeZoneOffset).AddHours(_gmtOffset);
+            var data = FindClosestDataByTime(t);
+            _barDataCache[bar] = data;
+            return data;
+        }
+
+        private (decimal median, decimal mad) CalcMedianMadIncrement(int bar, ColumnType column, int instrumentTimeZoneOffset)
+        {
+            if (bar <= 0)
+                return (0m, 0m);
+
+            int startBar = Math.Max(1, bar - _stdDevLookbackBars);
+            var inc = new List<decimal>(_stdDevLookbackBars);
+
+            for (int b = startBar; b <= bar; b++)
+            {
+                var d0 = TryGetBarData(b, instrumentTimeZoneOffset);
+                var d1 = TryGetBarData(b - 1, instrumentTimeZoneOffset);
+                if (d0 == null || d1 == null)
+                    continue;
+
+                inc.Add(CalcDiffForColumn(d0, d1, column));
+            }
+
+            if (inc.Count < 3)
+                return (0m, 0m);
+
+            inc.Sort();
+            var median = MedianOfSorted(inc);
+
+            // MAD
+            var dev = new List<decimal>(inc.Count);
+            for (int i = 0; i < inc.Count; i++)
+                dev.Add(Math.Abs(inc[i] - median));
+            dev.Sort();
+            var mad = MedianOfSorted(dev);
+
+            return (median, mad);
+        }
+
+        private static decimal MedianOfSorted(List<decimal> sorted)
+        {
+            int n = sorted.Count;
+            if (n == 0)
+                return 0m;
+            int mid = n / 2;
+            if ((n & 1) == 1)
+                return sorted[mid];
+            return (sorted[mid - 1] + sorted[mid]) / 2m;
+        }
+
+        private (decimal q1, decimal q3, decimal iqr) CalcIQRIncrement(int bar, ColumnType column, int instrumentTimeZoneOffset)
+        {
+            if (bar <= 0)
+                return (0m, 0m, 0m);
+
+            int startBar = Math.Max(1, bar - _stdDevLookbackBars);
+            var inc = new List<decimal>(_stdDevLookbackBars);
+
+            for (int b = startBar; b <= bar; b++)
+            {
+                var d0 = TryGetBarData(b, instrumentTimeZoneOffset);
+                var d1 = TryGetBarData(b - 1, instrumentTimeZoneOffset);
+                if (d0 == null || d1 == null)
+                    continue;
+
+                inc.Add(CalcDiffForColumn(d0, d1, column));
+            }
+
+            if (inc.Count < 4)
+                return (0m, 0m, 0m);
+
+            inc.Sort();
+            int q1_idx = inc.Count / 4;
+            int q3_idx = (3 * inc.Count) / 4;
+            var q1 = inc[q1_idx];
+            var q3 = inc[q3_idx];
+            var iqr = q3 - q1;
+
+            return (q1, q3, iqr);
         }
     }
 }

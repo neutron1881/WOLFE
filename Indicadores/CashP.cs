@@ -185,8 +185,9 @@ namespace ATAS.Indicators.Technical
             set { _quotesCsvPath = value ?? string.Empty; ForceReload(); }
         }
 
-        // NUEVO: claves de columnas a usar para values (evita confusiones con múltiples columnas)
-        private string _callsColumnKey = "Cash Call";
+        // Claves de columnas a usar para values (evita confusiones con múltiples columnas)
+        // Default actualizado para QQQ_chain.csv (CALL $$$ / PUTS $$$)
+        private string _callsColumnKey = "CALL $$$";
         [Display(GroupName = "1. Settings", Name = "Calls column key", Order =50)]
         public string CallsColumnKey
         {
@@ -194,7 +195,7 @@ namespace ATAS.Indicators.Technical
             set { _callsColumnKey = value ?? string.Empty; ForceReload(); }
         }
 
-        private string _putsColumnKey = "Cash Put";
+        private string _putsColumnKey = "PUTS $$$";
         [Display(GroupName = "1. Settings", Name = "Puts column key", Order =60)]
         public string PutsColumnKey
         {
@@ -1891,8 +1892,9 @@ namespace ATAS.Indicators.Technical
             switch (_profileType)
             {
                 case ProfileDataType.Cash:
-                    _callsColumnKey = "Cash Call";
-                    _putsColumnKey = "Cash Put";
+                    // Nuevo CSV (QQQ_chain.csv) usa CALL $$$ / PUTS $$$ (Cash)
+                    _callsColumnKey = "CALL $$$";
+                    _putsColumnKey = "PUTS $$$";
                     break;
                 case ProfileDataType.IV:
                     _callsColumnKey = "IV Call";
@@ -2209,7 +2211,7 @@ namespace ATAS.Indicators.Technical
                 if (idxPuts < 0)
                     idxPuts = FindIndex(headers, "put");
 
-                // Nuevo formato: Timestamp, QQQ_Price, NQ_Price
+                // Nuevo formato: Timestamp, QQQ_Price, NQ_Price (opcional)
                 int idxTs = FindIndex(headers, "timestamp");
                 int idxQqqPrice = FindIndex(headers, "qqqprice");
                 int idxNqPrice = FindIndex(headers, "nqprice");
@@ -2282,8 +2284,9 @@ namespace ATAS.Indicators.Technical
                     decimal factor = 1m;
                     if (!autoConversionEnabled && enableConversion)
                     {
-                        // Preferir NQ_Price / QQQ_Price si ambas están en el CSV
-                        if (idxQqqPrice >= 0 && idxNqPrice >= 0 && TryParseDecimal(cols[idxQqqPrice], out var qqqVal) && qqqVal > 0 &&
+                        // Preferir NQ_Price / QQQ_Price si ambas están en el CSV (nuevo formato)
+                        if (idxQqqPrice >= 0 && idxNqPrice >= 0 && idxQqqPrice < cols.Length && idxNqPrice < cols.Length &&
+                            TryParseDecimal(cols[idxQqqPrice], out var qqqVal) && qqqVal > 0 &&
                             TryParseDecimal(cols[idxNqPrice], out var nqVal) && nqVal > 0)
                         {
                             factor = SafeDiv(nqVal, qqqVal);
