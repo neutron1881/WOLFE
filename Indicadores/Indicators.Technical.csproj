@@ -1,0 +1,82 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ATAS.Indicators.Technical</RootNamespace>
+    <AssemblyName>ATAS.Indicators.Technical</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <LangVersion>latest</LangVersion>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>..\..\..\GitLab\OFT\OFT.snk</AssemblyOriginatorKeyFile>
+    <Configurations>Debug;Release;Publish</Configurations>
+    <Platforms>AnyCPU;Cross</Platforms>
+  </PropertyGroup>
+
+	<PropertyGroup Condition=" '$(Platform)' == 'Cross' ">
+		<UseWPF>False</UseWPF>
+		<DefineConstants>$(DefineConstants);CROSS_PLATFORM</DefineConstants>
+		<TargetFramework>net10.0</TargetFramework>
+	</PropertyGroup>
+
+	<PropertyGroup Condition=" '$(Platform)' != 'Cross' ">
+		<UseWPF>True</UseWPF>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<NoWarn>$(NoWarn);CA1416</NoWarn>
+	</PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Publish' ">
+    <Optimize Condition=" '$(Optimize)' == '' ">true</Optimize>
+  </PropertyGroup>
+
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.WindowsDesktop" Condition=" '$(Platform)' != 'Cross' " />
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.WindowsDesktop" Condition=" '$(Platform)' != 'Cross' " />
+  
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\GitLab\OFT\Attributes\Attributes.csproj" />
+    <ProjectReference Include="..\..\..\GitLab\OFT\DataFeedsCore\DataFeedsCore.csproj" />
+    <ProjectReference Include="..\..\..\GitLab\OFT\Indicators\Indicators.csproj" />
+    <ProjectReference Include="..\..\..\GitLab\OFT\Localization\Localization.csproj" />
+    <ProjectReference Include="..\..\..\GitLab\OFT\Renders\Rendering\Rendering.csproj" />
+    <ProjectReference Include="..\..\..\GitLab\Utils\Common\Common.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\..\GitLab\OFT\OFTAssemblyInfo.cs" Link="Properties\OFTAssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\GitLab\OFT\Tools\CrossPlatformAnalyzer\CrossPlatformAnalyzer.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <OutputItemType>Analyzer</OutputItemType>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>PublicResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Platform)' == 'Cross' ">
+	  <Compile Remove="**\*.Windows.cs" />
+	  <None Include="**\*.Windows.cs" Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)" />
+
+	  <Compile Remove="**\*.xaml.cs" />
+	  <None Include="**\*.xaml.cs" Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)" />
+
+	  <Compile Remove="**\*.xaml" />
+	  <None Include="**\*.xaml" Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Platform)' != 'Cross' ">
+	  <Compile Remove="**\*.Common.cs" />
+	  <None Include="**\*.Common.cs" Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)" />
+	  <ProjectReference Include="..\..\..\GitLab\Utils\Windows\Windows.csproj" />
+  </ItemGroup>
+</Project>

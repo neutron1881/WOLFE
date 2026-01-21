@@ -17,6 +17,20 @@ namespace ATAS.Indicators.Technical
     [DisplayName("CashProfile NewFlow")]
     public class CashProfile : Indicator
     {
+		private void RequestRecalc([System.Runtime.CompilerServices.CallerMemberName] string propertyName = "")
+		{
+			RaisePropertyChanged(propertyName);
+			RecalculateValues();
+			RedrawChart();
+		}
+
+		private class DarkPoolRow
+		{
+			public decimal Price { get; set; }
+			public decimal Notional { get; set; }
+			public decimal Volume { get; set; }
+			public decimal TradeCount { get; set; }
+		}
         private class StrikeRow
         {
             // Strike final usado para posicionar (ES si conversión activada, SPY si no)
@@ -56,6 +70,9 @@ namespace ATAS.Indicators.Technical
         // Base rows para auto-conversión (StrikeSpy + valores)
         private readonly List<StrikeRow> _baseRows = new();
 
+		private readonly List<DarkPoolRow> _darkPoolRows = new();
+		private decimal _lastNqPriceFromCsv;
+
         // Último precio del CSV (columna Price) para auto-conversión
         private decimal _lastCsvPrice;
         // Último timestamp usado del CSV (si existe)
@@ -83,6 +100,95 @@ namespace ATAS.Indicators.Technical
                 ForceReload();
             }
         }
+
+		private string _darkPoolFileName = "QQQ_DarkPool.csv";
+		[Display(GroupName = "1. DarkPool", Name = "CSV file name", Order = 10)]
+		public string DarkPoolFileName
+		{
+			get => _darkPoolFileName;
+			set { _darkPoolFileName = string.IsNullOrWhiteSpace(value) ? "QQQ_DarkPool.csv" : value.Trim(); ForceReload(); RequestRecalc(); }
+		}
+
+		private Color _darkPoolColor = Color.Orange;
+		[Display(GroupName = "1. DarkPool", Name = "Color", Order = 80)]
+		public Color DarkPoolColor
+		{
+			get => _darkPoolColor;
+			set { _darkPoolColor = value; RequestRecalc(); }
+		}
+
+		private bool _darkPoolShowDetails = true;
+		[Display(GroupName = "1. DarkPool", Name = "Show Volume/Trades", Order = 50)]
+		public bool DarkPoolShowDetails
+		{
+			get => _darkPoolShowDetails;
+			set { _darkPoolShowDetails = value; RequestRecalc(); }
+		}
+
+		private int _darkPoolDetailsOffsetX = 10;
+		[Display(GroupName = "1. DarkPool", Name = "Details offset X (px)", Order = 60)]
+		[Range(-2000, 2000)]
+		public int DarkPoolDetailsOffsetX
+		{
+			get => _darkPoolDetailsOffsetX;
+			set { _darkPoolDetailsOffsetX = Math.Clamp(value, -2000, 2000); RequestRecalc(); }
+		}
+
+		private int _darkPoolDetailsOffsetY = 0;
+		[Display(GroupName = "1. DarkPool", Name = "Details offset Y (px)", Order = 70)]
+		[Range(-2000, 2000)]
+		public int DarkPoolDetailsOffsetY
+		{
+			get => _darkPoolDetailsOffsetY;
+			set { _darkPoolDetailsOffsetY = Math.Clamp(value, -2000, 2000); RequestRecalc(); }
+		}
+
+		private decimal _darkPoolMinNotional = 0m;
+		[Display(GroupName = "1. DarkPool", Name = "Min notional", Order = 30)]
+		[Range(0, 1000000000000)]
+		public decimal DarkPoolMinNotional
+		{
+			get => _darkPoolMinNotional;
+			set { _darkPoolMinNotional = Math.Max(0, value); ForceReload(); RequestRecalc(); }
+		}
+
+		private decimal _darkPoolGroupStep = 0m;
+		[Display(GroupName = "1. DarkPool", Name = "Group step (price)", Order = 35)]
+		[Range(0, 1000000)]
+		public decimal DarkPoolGroupStep
+		{
+			get => _darkPoolGroupStep;
+			set { _darkPoolGroupStep = Math.Max(0, value); ForceReload(); RequestRecalc(); }
+		}
+
+		private int _darkPoolMaxLevels = 0;
+		[Display(GroupName = "1. DarkPool", Name = "Max levels (0=all)", Order = 40)]
+		[Range(0, 1000)]
+		public int DarkPoolMaxLevels
+		{
+			get => _darkPoolMaxLevels;
+			set
+			{
+				_darkPoolMaxLevels = Math.Max(0, value);
+				_darkPoolLevelPreset = DarkPoolLevelPreset.Custom;
+				ForceReload();
+				RequestRecalc();
+			}
+		}
+
+		private decimal _darkPoolMaxDistanceFromPrice = 0m;
+		[Display(GroupName = "1. DarkPool", Name = "Max distance from price (0=off)", Order = 45)]
+		[Range(0, 1000000)]
+		public decimal DarkPoolMaxDistanceFromPrice
+		{
+			get => _darkPoolMaxDistanceFromPrice;
+			set
+			{
+				_darkPoolMaxDistanceFromPrice = Math.Max(0, value);
+				ForceReload();
+				RequestRecalc();
+			}
+		}
 
         private int _refreshSeconds =60;
         [Display(GroupName = "1. Settings", Name = "Refresh (sec)", Order =20)]
@@ -151,7 +257,7 @@ namespace ATAS.Indicators.Technical
         public bool AutoConversionAlignByTimestamp
         {
             get => _autoConvUseTimestamp;
-            set { _autoConvUseTimestamp = value; }
+            set { _autoConvUseTimestamp = value; RequestRecalc(); }
         }
 
         private int _autoConvToleranceSec = 2;
@@ -160,24 +266,51 @@ namespace ATAS.Indicators.Technical
         public int AutoConversionTimestampToleranceSec
         {
             get => _autoConvToleranceSec;
-            set { _autoConvToleranceSec = Math.Clamp(value, 0, 600); }
+            set { _autoConvToleranceSec = Math.Clamp(value, 0, 600); RequestRecalc(); }
         }
 
-        // Tipo de perfil (preset de columnas)
-        public enum ProfileDataType { Custom, Cash, IV, Delta, Gex }
-        private ProfileDataType _profileType = ProfileDataType.Cash;
-        [Display(GroupName = "1. Settings", Name = "Profile type", Order =40)]
-        public ProfileDataType ProfileType
-        {
-            get => _profileType;
-            set
-            {
-                _profileType = value;
-                ApplyProfilePreset();
-            }
-        }
+         // Tipo de perfil (preset de columnas)
+         public enum ProfileDataType { Custom, Cash, IV, Delta, Gex, DarkPool }
+         public enum DarkPoolLevelPreset { Custom, Top10, Top20, Top50 }
 
-        private string _quotesCsvPath = string.Empty;
+        private bool IsDarkPoolProfile => _profileType == ProfileDataType.DarkPool;
+         
+         private ProfileDataType _profileType = ProfileDataType.Cash;
+         [Display(GroupName = "1. Settings", Name = "Profile type", Order =40)]
+         public ProfileDataType ProfileType
+         {
+             get => _profileType;
+             set
+             {
+                 _profileType = value;
+                 ApplyProfilePreset();
+             }
+         }
+
+         private DarkPoolLevelPreset _darkPoolLevelPreset = DarkPoolLevelPreset.Custom;
+         [Display(GroupName = "1. DarkPool", Name = "Top levels preset", Order =20)]
+         public DarkPoolLevelPreset DarkPoolTopLevelsPreset
+         {
+             get => _darkPoolLevelPreset;
+             set
+             {
+                 _darkPoolLevelPreset = value;
+                 if (value != DarkPoolLevelPreset.Custom)
+                 {
+                     _darkPoolMaxLevels = value switch
+                     {
+                         DarkPoolLevelPreset.Top10 => 10,
+                         DarkPoolLevelPreset.Top20 => 20,
+                         DarkPoolLevelPreset.Top50 => 50,
+                         _ => 0
+                     };
+                 }
+                 ForceReload();
+                 RequestRecalc();
+             }
+         }
+
+         private string _quotesCsvPath = string.Empty;
         [Display(GroupName = "1. Settings", Name = "Quotes CSV (Timestamp, SPY, ES)", Order =80)]
         public string QuotesCsvPath
         {
@@ -238,7 +371,7 @@ namespace ATAS.Indicators.Technical
         public int CenterOffsetPx
         {
             get => _centerOffsetPx;
-            set { _centerOffsetPx = Math.Clamp(value, -5000,5000); RedrawChart(); }
+			set { _centerOffsetPx = Math.Clamp(value, -5000,5000); RequestRecalc(); }
         }
 
         private bool _callsOnRight = true;
@@ -246,7 +379,7 @@ namespace ATAS.Indicators.Technical
         public bool CallsOnRight
         {
             get => _callsOnRight;
-            set { _callsOnRight = value; RedrawChart(); }
+			set { _callsOnRight = value; RequestRecalc(); }
         }
 
         private bool _showCenterLine = true;
@@ -254,7 +387,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowCenterLine
         {
             get => _showCenterLine;
-            set { _showCenterLine = value; RedrawChart(); }
+			set { _showCenterLine = value; RequestRecalc(); }
         }
 
         private Color _centerLineColor = Color.FromArgb(140, Color.Red);
@@ -262,7 +395,7 @@ namespace ATAS.Indicators.Technical
         public Color CenterLineColor
         {
             get => _centerLineColor;
-            set { _centerLineColor = value; RedrawChart(); }
+			set { _centerLineColor = value; RequestRecalc(); }
         }
 
         private int _centerLineThickness =1;
@@ -271,7 +404,7 @@ namespace ATAS.Indicators.Technical
         public int CenterLineThickness
         {
             get => _centerLineThickness;
-            set { _centerLineThickness = Math.Clamp(value,1,10); RedrawChart(); }
+			set { _centerLineThickness = Math.Clamp(value,1,10); RequestRecalc(); }
         }
 
         // Appearance
@@ -281,7 +414,7 @@ namespace ATAS.Indicators.Technical
         public int MaxBarWidthPx
         {
             get => _maxBarWidthPx;
-            set { _maxBarWidthPx = Math.Clamp(value,20,1000); RedrawChart(); }
+			set { _maxBarWidthPx = Math.Clamp(value,20,1000); RequestRecalc(); }
         }
 
         private int _barThicknessPx =7;
@@ -290,7 +423,7 @@ namespace ATAS.Indicators.Technical
         public int BarThicknessPx
         {
             get => _barThicknessPx;
-            set { _barThicknessPx = Math.Clamp(value,2,50); RedrawChart(); }
+			set { _barThicknessPx = Math.Clamp(value,2,50); RequestRecalc(); }
         }
 
         private Color _callsColor = Color.DodgerBlue;
@@ -298,7 +431,7 @@ namespace ATAS.Indicators.Technical
         public Color CallsColor
         {
             get => _callsColor;
-            set { _callsColor = value; RedrawChart(); }
+			set { _callsColor = value; RequestRecalc(); }
         }
 
         private Color _putsColor = Color.IndianRed;
@@ -306,7 +439,7 @@ namespace ATAS.Indicators.Technical
         public Color PutsColor
         {
             get => _putsColor;
-            set { _putsColor = value; RedrawChart(); }
+			set { _putsColor = value; RequestRecalc(); }
         }
 
         // Colores por perfil (IV y Delta y GEX)
@@ -315,7 +448,7 @@ namespace ATAS.Indicators.Technical
         public Color IvCallsColor
         {
             get => _ivCallsColor;
-            set { _ivCallsColor = value; RedrawChart(); }
+			set { _ivCallsColor = value; RequestRecalc(); }
         }
 
         private Color _ivPutsColor = Color.Salmon;
@@ -323,7 +456,7 @@ namespace ATAS.Indicators.Technical
         public Color IvPutsColor
         {
             get => _ivPutsColor;
-            set { _ivPutsColor = value; RedrawChart(); }
+			set { _ivPutsColor = value; RequestRecalc(); }
         }
 
         private Color _deltaCallsColor = Color.SteelBlue;
@@ -331,7 +464,7 @@ namespace ATAS.Indicators.Technical
         public Color DeltaCallsColor
         {
             get => _deltaCallsColor;
-            set { _deltaCallsColor = value; RedrawChart(); }
+			set { _deltaCallsColor = value; RequestRecalc(); }
         }
 
         private Color _deltaPutsColor = Color.Sienna;
@@ -339,7 +472,7 @@ namespace ATAS.Indicators.Technical
         public Color DeltaPutsColor
         {
             get => _deltaPutsColor;
-            set { _deltaPutsColor = value; RedrawChart(); }
+			set { _deltaPutsColor = value; RequestRecalc(); }
         }
 
         private Color _gexCallsColor = Color.MediumOrchid;
@@ -347,7 +480,7 @@ namespace ATAS.Indicators.Technical
         public Color GexCallsColor
         {
             get => _gexCallsColor;
-            set { _gexCallsColor = value; RedrawChart(); }
+			set { _gexCallsColor = value; RequestRecalc(); }
         }
 
         private Color _gexPutsColor = Color.Orchid;
@@ -355,7 +488,7 @@ namespace ATAS.Indicators.Technical
         public Color GexPutsColor
         {
             get => _gexPutsColor;
-            set { _gexPutsColor = value; RedrawChart(); }
+			set { _gexPutsColor = value; RequestRecalc(); }
         }
 
         private int _fillOpacity =140; //0..255
@@ -364,7 +497,7 @@ namespace ATAS.Indicators.Technical
         public int FillOpacity
         {
             get => _fillOpacity;
-            set { _fillOpacity = Math.Clamp(value,0,255); RedrawChart(); }
+			set { _fillOpacity = Math.Clamp(value,0,255); RequestRecalc(); }
         }
 
         private bool _showValues;
@@ -372,15 +505,24 @@ namespace ATAS.Indicators.Technical
         public bool ShowValues
         {
             get => _showValues;
-            set { _showValues = value; RedrawChart(); }
+			set { _showValues = value; RequestRecalc(); }
         }
+
+		private int _valueOffsetPx = 6;
+		[Display(GroupName = "3. Appearance", Name = "Side value offset X (px)", Order =105)]
+		[Range(-2000, 2000)]
+		public int ValueOffsetPx
+		{
+			get => _valueOffsetPx;
+			set { _valueOffsetPx = Math.Clamp(value, -2000, 2000); RequestRecalc(); }
+		}
 
         private string _valueFormat = "0,0";
         [Display(GroupName = "3. Appearance", Name = "Side value format", Order =110)]
         public string ValueFormat
         {
             get => _valueFormat;
-            set { _valueFormat = value ?? string.Empty; RedrawChart(); }
+			set { _valueFormat = value ?? string.Empty; RequestRecalc(); }
         }
 
         // Strike labels next to side values (SPY)
@@ -389,7 +531,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowCenterStrikes
         {
             get => _showCenterStrikes;
-            set { _showCenterStrikes = value; RedrawChart(); }
+			set { _showCenterStrikes = value; RequestRecalc(); }
         }
 
         private string _strikeFormat = "0"; // entero por defecto para formato (619)
@@ -397,7 +539,7 @@ namespace ATAS.Indicators.Technical
         public string StrikeFormat
         {
             get => _strikeFormat;
-            set { _strikeFormat = value ?? string.Empty; }
+            set { _strikeFormat = value ?? string.Empty; RequestRecalc(); }
         }
 
         private int _strikeFontSize =8;
@@ -406,7 +548,7 @@ namespace ATAS.Indicators.Technical
         public int StrikeFontSize
         {
             get => _strikeFontSize;
-            set { _strikeFontSize = Math.Clamp(value,6,40); RedrawChart(); }
+			set { _strikeFontSize = Math.Clamp(value,6,40); RequestRecalc(); }
         }
 
         private Color _strikeColor = Color.LightSteelBlue;
@@ -414,7 +556,7 @@ namespace ATAS.Indicators.Technical
         public Color StrikeColor
         {
             get => _strikeColor;
-            set { _strikeColor = value; RedrawChart(); }
+			set { _strikeColor = value; RequestRecalc(); }
         }
 
         private int _strikeLeftMarginPx =10;
@@ -423,7 +565,7 @@ namespace ATAS.Indicators.Technical
         public int StrikeLeftMarginPx
         {
             get => _strikeLeftMarginPx;
-            set { _strikeLeftMarginPx = Math.Clamp(value,0,300); RedrawChart(); }
+			set { _strikeLeftMarginPx = Math.Clamp(value,0,300); RequestRecalc(); }
         }
 
         private int _strikeRightMarginPx =10;
@@ -432,7 +574,7 @@ namespace ATAS.Indicators.Technical
         public int StrikeRightMarginPx
         {
             get => _strikeRightMarginPx;
-            set { _strikeRightMarginPx = Math.Clamp(value,0,300); RedrawChart(); }
+			set { _strikeRightMarginPx = Math.Clamp(value,0,300); RequestRecalc(); }
         }
 
         // Top summary panel (series style)
@@ -441,7 +583,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowTopSummary
         {
             get => _showTopSummary;
-            set { _showTopSummary = value; RedrawChart(); }
+			set { _showTopSummary = value; RequestRecalc(); }
         }
 
         private int _topFontSize =11;
@@ -450,7 +592,7 @@ namespace ATAS.Indicators.Technical
         public int TopFontSize
         {
             get => _topFontSize;
-            set { _topFontSize = Math.Clamp(value,6,60); RedrawChart(); }
+			set { _topFontSize = Math.Clamp(value,6,60); RequestRecalc(); }
         }
 
         private int _topMarginPx =6;
@@ -459,7 +601,7 @@ namespace ATAS.Indicators.Technical
         public int TopMarginPx
         {
             get => _topMarginPx;
-            set { _topMarginPx = Math.Clamp(value,0,200); RedrawChart(); }
+			set { _topMarginPx = Math.Clamp(value,0,200); RequestRecalc(); }
         }
 
         private int _summaryBarWidthPx =240;
@@ -468,7 +610,7 @@ namespace ATAS.Indicators.Technical
         public int SummaryBarWidthPx
         {
             get => _summaryBarWidthPx;
-            set { _summaryBarWidthPx = Math.Clamp(value,60,1000); RedrawChart(); }
+			set { _summaryBarWidthPx = Math.Clamp(value,60,1000); RequestRecalc(); }
         }
 
         private int _summaryRowHeightPx =12;
@@ -477,7 +619,7 @@ namespace ATAS.Indicators.Technical
         public int SummaryRowHeightPx
         {
             get => _summaryRowHeightPx;
-            set { _summaryRowHeightPx = Math.Clamp(value,8,40); RedrawChart(); }
+			set { _summaryRowHeightPx = Math.Clamp(value,8,40); RequestRecalc(); }
         }
 
         private int _summaryRowSpacingPx =4;
@@ -486,7 +628,7 @@ namespace ATAS.Indicators.Technical
         public int SummaryRowSpacingPx
         {
             get => _summaryRowSpacingPx;
-            set { _summaryRowSpacingPx = Math.Clamp(value,0,40); RedrawChart(); }
+			set { _summaryRowSpacingPx = Math.Clamp(value,0,40); RequestRecalc(); }
         }
 
         private int _summaryLabelWidthPx =110;
@@ -495,7 +637,7 @@ namespace ATAS.Indicators.Technical
         public int SummaryLabelWidthPx
         {
             get => _summaryLabelWidthPx;
-            set { _summaryLabelWidthPx = Math.Clamp(value,50,300); RedrawChart(); }
+			set { _summaryLabelWidthPx = Math.Clamp(value,50,300); RequestRecalc(); }
         }
 
         private Color _summaryBackBar = Color.FromArgb(80,120,120,120);
@@ -503,7 +645,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryBackBar
         {
             get => _summaryBackBar;
-            set { _summaryBackBar = value; RedrawChart(); }
+			set { _summaryBackBar = value; RequestRecalc(); }
         }
 
         private Color _summaryCallsColor = Color.DodgerBlue;
@@ -511,7 +653,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryCallsColor
         {
             get => _summaryCallsColor;
-            set { _summaryCallsColor = value; RedrawChart(); }
+			set { _summaryCallsColor = value; RequestRecalc(); }
         }
 
         private Color _summaryPutsColor = Color.IndianRed;
@@ -519,7 +661,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryPutsColor
         {
             get => _summaryPutsColor;
-            set { _summaryPutsColor = value; RedrawChart(); }
+			set { _summaryPutsColor = value; RequestRecalc(); }
         }
 
         // Colores del panel superior por perfil (IV, Delta y GEX)
@@ -528,7 +670,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryCallsColorIV
         {
             get => _summaryCallsColorIv;
-            set { _summaryCallsColorIv = value; RedrawChart(); }
+			set { _summaryCallsColorIv = value; RequestRecalc(); }
         }
 
         private Color _summaryPutsColorIv = Color.Salmon;
@@ -536,7 +678,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryPutsColorIV
         {
             get => _summaryPutsColorIv;
-            set { _summaryPutsColorIv = value; RedrawChart(); }
+			set { _summaryPutsColorIv = value; RequestRecalc(); }
         }
 
         private Color _summaryCallsColorDelta = Color.SteelBlue;
@@ -544,7 +686,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryCallsColorDelta
         {
             get => _summaryCallsColorDelta;
-            set { _summaryCallsColorDelta = value; RedrawChart(); }
+			set { _summaryCallsColorDelta = value; RequestRecalc(); }
         }
 
         private Color _summaryPutsColorDelta = Color.Sienna;
@@ -552,7 +694,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryPutsColorDelta
         {
             get => _summaryPutsColorDelta;
-            set { _summaryPutsColorDelta = value; RedrawChart(); }
+			set { _summaryPutsColorDelta = value; RequestRecalc(); }
         }
 
         private Color _summaryCallsColorGex = Color.MediumOrchid;
@@ -560,7 +702,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryCallsColorGEX
         {
             get => _summaryCallsColorGex;
-            set { _summaryCallsColorGex = value; RedrawChart(); }
+			set { _summaryCallsColorGex = value; RequestRecalc(); }
         }
 
         private Color _summaryPutsColorGex = Color.Orchid;
@@ -568,7 +710,7 @@ namespace ATAS.Indicators.Technical
         public Color SummaryPutsColorGEX
         {
             get => _summaryPutsColorGex;
-            set { _summaryPutsColorGex = value; RedrawChart(); }
+			set { _summaryPutsColorGex = value; RequestRecalc(); }
         }
 
         // Mostrar SPY implícado centrado
@@ -577,7 +719,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowSpyCurrent
         {
             get => _showSpyCurrent;
-            set { _showSpyCurrent = value; RedrawChart(); }
+			set { _showSpyCurrent = value; RequestRecalc(); }
         }
 
         private string _spyValueFormat = "0.00";
@@ -585,7 +727,7 @@ namespace ATAS.Indicators.Technical
         public string SpyValueFormat
         {
             get => _spyValueFormat;
-            set { _spyValueFormat = value ?? string.Empty; }
+            set { _spyValueFormat = value ?? string.Empty; RequestRecalc(); }
         }
 
         // Color de textos del Top Summary
@@ -594,7 +736,7 @@ namespace ATAS.Indicators.Technical
         public Color TopSummaryTextColor
         {
             get => _topSummaryTextColor;
-            set { _topSummaryTextColor = value; RedrawChart(); }
+			set { _topSummaryTextColor = value; RequestRecalc(); }
         }
 
         private bool _useChartEs = true;
@@ -602,7 +744,7 @@ namespace ATAS.Indicators.Technical
         public bool UseChartPriceAsES
         {
             get => _useChartEs;
-            set { _useChartEs = value; }
+            set { _useChartEs = value; RequestRecalc(); }
         }
 
         // Strike horizontal lines
@@ -611,7 +753,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowStrikeLines
         {
             get => _showStrikeLines;
-            set { _showStrikeLines = value; RedrawChart(); }
+			set { _showStrikeLines = value; RequestRecalc(); }
         }
 
         private Color _strikeLineColor = Color.FromArgb(60,200,200,200);
@@ -619,7 +761,7 @@ namespace ATAS.Indicators.Technical
         public Color StrikeLineColor
         {
             get => _strikeLineColor;
-            set { _strikeLineColor = value; RedrawChart(); }
+			set { _strikeLineColor = value; RequestRecalc(); }
         }
 
         private int _strikeLineThickness =1;
@@ -628,7 +770,7 @@ namespace ATAS.Indicators.Technical
         public int StrikeLineThickness
         {
             get => _strikeLineThickness;
-            set { _strikeLineThickness = Math.Clamp(value,1,10); RedrawChart(); }
+			set { _strikeLineThickness = Math.Clamp(value,1,10); RequestRecalc(); }
         }
 
         private DashStyle _strikeLineDash = DashStyle.Solid;
@@ -636,7 +778,7 @@ namespace ATAS.Indicators.Technical
         public DashStyle StrikeLineDash
         {
             get => _strikeLineDash;
-            set { _strikeLineDash = value; RedrawChart(); }
+			set { _strikeLineDash = value; RequestRecalc(); }
         }
 
         // Max lines (dominant strikes)
@@ -645,7 +787,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowMaxCallsLine
         {
             get => _showMaxCallsLine;
-            set { _showMaxCallsLine = value; RedrawChart(); }
+			set { _showMaxCallsLine = value; RequestRecalc(); }
         }
 
         private bool _showMaxPutsLine = true;
@@ -653,7 +795,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowMaxPutsLine
         {
             get => _showMaxPutsLine;
-            set { _showMaxPutsLine = value; RedrawChart(); }
+			set { _showMaxPutsLine = value; RequestRecalc(); }
         }
 
         private Color _maxCallsLineColor = Color.DodgerBlue;
@@ -661,7 +803,7 @@ namespace ATAS.Indicators.Technical
         public Color MaxCallsLineColor
         {
             get => _maxCallsLineColor;
-            set { _maxCallsLineColor = value; RedrawChart(); }
+			set { _maxCallsLineColor = value; RequestRecalc(); }
         }
 
         private Color _maxPutsLineColor = Color.IndianRed;
@@ -669,7 +811,7 @@ namespace ATAS.Indicators.Technical
         public Color MaxPutsLineColor
         {
             get => _maxPutsLineColor;
-            set { _maxPutsLineColor = value; RedrawChart(); }
+			set { _maxPutsLineColor = value; RequestRecalc(); }
         }
 
         private int _maxLinesThickness =2;
@@ -678,7 +820,7 @@ namespace ATAS.Indicators.Technical
         public int MaxLinesThickness
         {
             get => _maxLinesThickness;
-            set { _maxLinesThickness = Math.Clamp(value,1,20); RedrawChart(); }
+			set { _maxLinesThickness = Math.Clamp(value,1,20); RequestRecalc(); }
         }
 
         private DashStyle _maxLinesDash = DashStyle.Solid;
@@ -686,7 +828,7 @@ namespace ATAS.Indicators.Technical
         public DashStyle MaxLinesDash
         {
             get => _maxLinesDash;
-            set { _maxLinesDash = value; RedrawChart(); }
+			set { _maxLinesDash = value; RequestRecalc(); }
         }
 
         // Net levels (Calls - Puts) por strike
@@ -695,7 +837,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowNetLevels
         {
             get => _showNetLevels;
-            set { _showNetLevels = value; RedrawChart(); }
+			set { _showNetLevels = value; RequestRecalc(); }
         }
 
         private int _netThicknessPx =9;
@@ -704,7 +846,7 @@ namespace ATAS.Indicators.Technical
         public int NetThicknessPx
         {
             get => _netThicknessPx;
-            set { _netThicknessPx = Math.Clamp(value,2,60); RedrawChart(); }
+			set { _netThicknessPx = Math.Clamp(value,2,60); RequestRecalc(); }
         }
 
         private int _netOpacity =200;
@@ -713,7 +855,7 @@ namespace ATAS.Indicators.Technical
         public int NetOpacity
         {
             get => _netOpacity;
-            set { _netOpacity = Math.Clamp(value,0,255); RedrawChart(); }
+			set { _netOpacity = Math.Clamp(value,0,255); RequestRecalc(); }
         }
 
         private Color _netCallsColor = Color.DodgerBlue;
@@ -721,7 +863,7 @@ namespace ATAS.Indicators.Technical
         public Color NetCallsColor
         {
             get => _netCallsColor;
-            set { _netCallsColor = value; RedrawChart(); }
+			set { _netCallsColor = value; RequestRecalc(); }
         }
 
         private Color _netPutsColor = Color.IndianRed;
@@ -729,7 +871,7 @@ namespace ATAS.Indicators.Technical
         public Color NetPutsColor
         {
             get => _netPutsColor;
-            set { _netPutsColor = value; RedrawChart(); }
+			set { _netPutsColor = value; RequestRecalc(); }
         }
 
         // Nuevos: Colores NET por perfil (IV, Delta, GEX)
@@ -738,7 +880,7 @@ namespace ATAS.Indicators.Technical
         public Color NetCallsColorIV
         {
             get => _netCallsColorIv;
-            set { _netCallsColorIv = value; RedrawChart(); }
+			set { _netCallsColorIv = value; RequestRecalc(); }
         }
 
         private Color _netPutsColorIv = Color.Salmon;
@@ -746,7 +888,7 @@ namespace ATAS.Indicators.Technical
         public Color NetPutsColorIV
         {
             get => _netPutsColorIv;
-            set { _netPutsColorIv = value; RedrawChart(); }
+			set { _netPutsColorIv = value; RequestRecalc(); }
         }
 
         private Color _netCallsColorDelta = Color.SteelBlue;
@@ -754,7 +896,7 @@ namespace ATAS.Indicators.Technical
         public Color NetCallsColorDelta
         {
             get => _netCallsColorDelta;
-            set { _netCallsColorDelta = value; RedrawChart(); }
+			set { _netCallsColorDelta = value; RequestRecalc(); }
         }
 
         private Color _netPutsColorDelta = Color.Sienna;
@@ -762,7 +904,7 @@ namespace ATAS.Indicators.Technical
         public Color NetPutsColorDelta
         {
             get => _netPutsColorDelta;
-            set { _netPutsColorDelta = value; RedrawChart(); }
+			set { _netPutsColorDelta = value; RequestRecalc(); }
         }
 
         private Color _netCallsColorGex = Color.MediumOrchid;
@@ -770,7 +912,7 @@ namespace ATAS.Indicators.Technical
         public Color NetCallsColorGEX
         {
             get => _netCallsColorGex;
-            set { _netCallsColorGex = value; RedrawChart(); }
+			set { _netCallsColorGex = value; RequestRecalc(); }
         }
 
         private Color _netPutsColorGex = Color.Orchid;
@@ -778,7 +920,7 @@ namespace ATAS.Indicators.Technical
         public Color NetPutsColorGEX
         {
             get => _netPutsColorGex;
-            set { _netPutsColorGex = value; RedrawChart(); }
+			set { _netPutsColorGex = value; RequestRecalc(); }
         }
 
         // Previous value markers (for last snapshot)
@@ -793,14 +935,14 @@ namespace ATAS.Indicators.Technical
         public bool ShowPreviousMarkers
         {
             get => _showPrevMarkers;
-            set { _showPrevMarkers = value; RedrawChart(); }
+			set { _showPrevMarkers = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "Marker mode", Order =20)]
         public PrevMarkerMode PreviousMarkerMode
         {
             get => _prevMarkerMode;
-            set { _prevMarkerMode = value; }
+            set { _prevMarkerMode = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "Marker size (px)", Order =30)]
@@ -808,21 +950,21 @@ namespace ATAS.Indicators.Technical
         public int PreviousMarkerSize
         {
             get => _prevMarkerSize;
-            set { _prevMarkerSize = Math.Clamp(value,2,20); RedrawChart(); }
+			set { _prevMarkerSize = Math.Clamp(value,2,20); RequestRecalc(); }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "Calls marker color", Order =40)]
         public Color PreviousMarkerCallsColor
         {
             get => _prevMarkerCallsColor;
-            set { _prevMarkerCallsColor = value; RedrawChart(); }
+			set { _prevMarkerCallsColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "Puts marker color", Order =50)]
         public Color PreviousMarkerPutsColor
         {
             get => _prevMarkerPutsColor;
-            set { _prevMarkerPutsColor = value; RedrawChart(); }
+			set { _prevMarkerPutsColor = value; RequestRecalc(); }
         }
 
         // Previous NET markers (Calls - Puts)
@@ -835,7 +977,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowPreviousNetMarkers
         {
             get => _showPrevNetMarkers;
-            set { _showPrevNetMarkers = value; RedrawChart(); }
+			set { _showPrevNetMarkers = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "NET marker size (px)", Order =70)]
@@ -843,21 +985,21 @@ namespace ATAS.Indicators.Technical
         public int PreviousNetMarkerSize
         {
             get => _prevNetMarkerSize;
-            set { _prevNetMarkerSize = Math.Clamp(value,2,20); RedrawChart(); }
+			set { _prevNetMarkerSize = Math.Clamp(value,2,20); RequestRecalc(); }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "NET positive color", Order =80)]
         public Color PreviousNetPositiveColor
         {
             get => _prevNetPositiveColor;
-            set { _prevNetPositiveColor = value; RedrawChart(); }
+			set { _prevNetPositiveColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "9. Previous markers", Name = "NET negative color", Order =90)]
         public Color PreviousNetNegativeColor
         {
             get => _prevNetNegativeColor;
-            set { _prevNetNegativeColor = value; RedrawChart(); }
+			set { _prevNetNegativeColor = value; RequestRecalc(); }
         }
 
         // 11. Alerts - NET change panel
@@ -871,7 +1013,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowNetChangePanel
         {
             get => _showNetChangePanel;
-            set { _showNetChangePanel = value; RedrawChart(); }
+			set { _showNetChangePanel = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "11. Alerts", Name = "NET change threshold %", Order = 20)]
@@ -879,7 +1021,7 @@ namespace ATAS.Indicators.Technical
         public decimal NetChangeThresholdPercent
         {
             get => _netChangeThresholdPercent;
-            set { _netChangeThresholdPercent = Math.Clamp(value, 0m, 1000m); }
+            set { _netChangeThresholdPercent = Math.Clamp(value, 0m, 1000m); RequestRecalc(); }
         }
 
         [Display(GroupName = "11. Alerts", Name = "Max items", Order = 30)]
@@ -887,7 +1029,7 @@ namespace ATAS.Indicators.Technical
         public int NetChangeMaxItems
         {
             get => _netChangeMaxItems;
-            set { _netChangeMaxItems = Math.Clamp(value, 1, 100); }
+            set { _netChangeMaxItems = Math.Clamp(value, 1, 100); RequestRecalc(); }
         }
 
         [Display(GroupName = "11. Alerts", Name = "Font size", Order = 40)]
@@ -895,14 +1037,14 @@ namespace ATAS.Indicators.Technical
         public int NetChangeFontSize
         {
             get => _netChangeFontSize;
-            set { _netChangeFontSize = Math.Clamp(value, 6, 40); }
+            set { _netChangeFontSize = Math.Clamp(value, 6, 40); RequestRecalc(); }
         }
 
         [Display(GroupName = "11. Alerts", Name = "Text color", Order = 50)]
         public Color NetChangeTextColor
         {
             get => _netChangeTextColor;
-            set { _netChangeTextColor = value; }
+            set { _netChangeTextColor = value; RequestRecalc(); }
         }
 
         // 12. Big trades (marcadores de incrementos grandes por strike)
@@ -922,7 +1064,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowBigTradeMarkers
         {
             get => _showBigTradeMarkers;
-            set { _showBigTradeMarkers = value; RedrawChart(); }
+			set { _showBigTradeMarkers = value; RecalculateValues(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Change threshold", Order = 20)]
@@ -930,7 +1072,7 @@ namespace ATAS.Indicators.Technical
         public decimal BigTradeThreshold
         {
             get => _bigTradeThreshold;
-            set { _bigTradeThreshold = Math.Clamp(value, 1m, 100000000m); }
+            set { _bigTradeThreshold = Math.Clamp(value, 1m, 100000000m); RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Base radius (px)", Order = 30)]
@@ -938,7 +1080,7 @@ namespace ATAS.Indicators.Technical
         public int BigTradeBaseRadius
         {
             get => _bigTradeBaseRadius;
-            set { _bigTradeBaseRadius = Math.Clamp(value, 2, 200); RedrawChart(); }
+			set { _bigTradeBaseRadius = Math.Clamp(value, 2, 200); RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Max radius (px)", Order = 40)]
@@ -946,14 +1088,14 @@ namespace ATAS.Indicators.Technical
         public int BigTradeMaxRadius
         {
             get => _bigTradeMaxRadius;
-            set { _bigTradeMaxRadius = Math.Clamp(value, 2, 400); RedrawChart(); }
+			set { _bigTradeMaxRadius = Math.Clamp(value, 2, 400); RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Radius per unit", Order = 50)]
         public decimal BigTradeRadiusPerUnit
         {
             get => _bigTradeRadiusPerUnit;
-            set { _bigTradeRadiusPerUnit = value <= 0 ? 0.0001m : value; }
+            set { _bigTradeRadiusPerUnit = value <= 0 ? 0.0001m : value; RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Offset from bar (px)", Order = 60)]
@@ -961,35 +1103,35 @@ namespace ATAS.Indicators.Technical
         public int BigTradeOffsetPx
         {
             get => _bigTradeOffsetPx;
-            set { _bigTradeOffsetPx = Math.Clamp(value, 0, 500); RedrawChart(); }
+			set { _bigTradeOffsetPx = Math.Clamp(value, 0, 500); RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Calls marker color", Order = 70)]
         public Color BigTradeCallsColor
         {
             get => _bigTradeCallsColor;
-            set { _bigTradeCallsColor = value; RedrawChart(); }
+			set { _bigTradeCallsColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Puts marker color", Order = 80)]
         public Color BigTradePutsColor
         {
             get => _bigTradePutsColor;
-            set { _bigTradePutsColor = value; RedrawChart(); }
+			set { _bigTradePutsColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Show value inside", Order = 90)]
         public bool BigTradeShowValue
         {
             get => _bigTradeShowValue;
-            set { _bigTradeShowValue = value; RedrawChart(); }
+			set { _bigTradeShowValue = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Value text color", Order = 100)]
         public Color BigTradeTextColor
         {
             get => _bigTradeTextColor;
-            set { _bigTradeTextColor = value; RedrawChart(); }
+			set { _bigTradeTextColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "12. Big trades", Name = "Font size", Order = 110)]
@@ -997,7 +1139,7 @@ namespace ATAS.Indicators.Technical
         public int BigTradeFontSize
         {
             get => _bigTradeFontSize;
-            set { _bigTradeFontSize = Math.Clamp(value, 6, 60); RedrawChart(); }
+			set { _bigTradeFontSize = Math.Clamp(value, 6, 60); RequestRecalc(); }
         }
 
         // 13. Persistent Big Trades (nuevas opciones)
@@ -1020,7 +1162,7 @@ namespace ATAS.Indicators.Technical
         public bool ShowPersistentBigTrades
         {
             get => _showPersistentBigTrades;
-            set { _showPersistentBigTrades = value; RedrawChart(); }
+			set { _showPersistentBigTrades = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Base radius (px)", Order = 20)]
@@ -1028,7 +1170,7 @@ namespace ATAS.Indicators.Technical
         public int PersistentBigTradeBaseRadius
         {
             get => _persistentBigTradeBaseRadius;
-            set { _persistentBigTradeBaseRadius = Math.Clamp(value, 2, 200); RedrawChart(); }
+			set { _persistentBigTradeBaseRadius = Math.Clamp(value, 2, 200); RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Max radius (px)", Order = 30)]
@@ -1036,14 +1178,14 @@ namespace ATAS.Indicators.Technical
         public int PersistentBigTradeMaxRadius
         {
             get => _persistentBigTradeMaxRadius;
-            set { _persistentBigTradeMaxRadius = Math.Clamp(value, 2, 400); RedrawChart(); }
+			set { _persistentBigTradeMaxRadius = Math.Clamp(value, 2, 400); RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Radius per unit", Order = 40)]
         public decimal PersistentBigTradeRadiusPerUnit
         {
             get => _persistentBigTradeRadiusPerUnit;
-            set { _persistentBigTradeRadiusPerUnit = value <= 0 ? 0.0001m : value; }
+            set { _persistentBigTradeRadiusPerUnit = value <= 0 ? 0.0001m : value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Offset from bar (px)", Order = 50)]
@@ -1051,35 +1193,35 @@ namespace ATAS.Indicators.Technical
         public int PersistentBigTradeOffsetPx
         {
             get => _persistentBigTradeOffsetPx;
-            set { _persistentBigTradeOffsetPx = Math.Clamp(value, 0, 500); RedrawChart(); }
+			set { _persistentBigTradeOffsetPx = Math.Clamp(value, 0, 500); RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Calls marker color", Order = 60)]
         public Color PersistentBigTradeCallsColor
         {
             get => _persistentBigTradeCallsColor;
-            set { _persistentBigTradeCallsColor = value; RedrawChart(); }
+			set { _persistentBigTradeCallsColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Puts marker color", Order = 70)]
         public Color PersistentBigTradePutsColor
         {
             get => _persistentBigTradePutsColor;
-            set { _persistentBigTradePutsColor = value; RedrawChart(); }
+			set { _persistentBigTradePutsColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Show value inside", Order = 80)]
         public bool PersistentBigTradeShowValue
         {
             get => _persistentBigTradeShowValue;
-            set { _persistentBigTradeShowValue = value; RedrawChart(); }
+			set { _persistentBigTradeShowValue = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Value text color", Order = 90)]
         public Color PersistentBigTradeTextColor
         {
             get => _persistentBigTradeTextColor;
-            set { _persistentBigTradeTextColor = value; RedrawChart(); }
+			set { _persistentBigTradeTextColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Value font size", Order = 100)]
@@ -1087,7 +1229,7 @@ namespace ATAS.Indicators.Technical
         public int PersistentBigTradeFontSize
         {
             get => _persistentBigTradeFontSize;
-            set { _persistentBigTradeFontSize = Math.Clamp(value, 6, 60); RedrawChart(); }
+			set { _persistentBigTradeFontSize = Math.Clamp(value, 6, 60); RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Circle opacity", Order = 110)]
@@ -1095,21 +1237,21 @@ namespace ATAS.Indicators.Technical
         public int PersistentBigTradeOpacity
         {
             get => _persistentBigTradeOpacity;
-            set { _persistentBigTradeOpacity = Math.Clamp(value, 0, 255); RedrawChart(); }
+			set { _persistentBigTradeOpacity = Math.Clamp(value, 0, 255); RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Show detection time", Order = 120)]
         public bool PersistentBigTradeShowTime
         {
             get => _persistentBigTradeShowTime;
-            set { _persistentBigTradeShowTime = value; RedrawChart(); }
+			set { _persistentBigTradeShowTime = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Time text color", Order = 130)]
         public Color PersistentBigTradeTimeColor
         {
             get => _persistentBigTradeTimeColor;
-            set { _persistentBigTradeTimeColor = value; RedrawChart(); }
+			set { _persistentBigTradeTimeColor = value; RequestRecalc(); }
         }
 
         [Display(GroupName = "13. Persistent Big Trades", Name = "Time font size", Order = 140)]
@@ -1117,7 +1259,7 @@ namespace ATAS.Indicators.Technical
         public int PersistentBigTradeTimeFontSize
         {
             get => _persistentBigTradeTimeFontSize;
-            set { _persistentBigTradeTimeFontSize = Math.Clamp(value, 6, 20); RedrawChart(); }
+			set { _persistentBigTradeTimeFontSize = Math.Clamp(value, 6, 20); RequestRecalc(); }
         }
 
         public CashProfile()
@@ -1217,6 +1359,7 @@ namespace ATAS.Indicators.Technical
 
             var sideFont = new RenderFont("Arial",8);
             var strikeFont = new RenderFont("Arial", _strikeFontSize);
+			var dpFont = new RenderFont("Arial", 8);
 
             foreach (var row in snapshot)
             {
@@ -1230,7 +1373,12 @@ namespace ATAS.Indicators.Technical
 
                 // Selección de color por perfil
                 Color callsBase, putsBase;
-                switch (_profileType)
+                if (IsDarkPoolProfile)
+                {
+                    callsBase = _darkPoolColor;
+                    putsBase = _darkPoolColor;
+                }
+                else switch (_profileType)
                 {
                     case ProfileDataType.IV:
                         callsBase = _ivCallsColor; putsBase = _ivPutsColor; break;
@@ -1269,6 +1417,25 @@ namespace ATAS.Indicators.Technical
                     var rectR = new Rectangle(xCenter, top, rightW, _barThicknessPx);
                     context.FillRectangle(Color.FromArgb(_fillOpacity, rightColor), rectR);
                 }
+
+			// DarkPool details: show volume and trade_count to the right of the bar
+			if (IsDarkPoolProfile && _darkPoolShowDetails)
+				{
+					DarkPoolRow? dp = null;
+					lock (_sync)
+					{
+						// Find exact mapped price row (Strike is already NQ-mapped price)
+						dp = _darkPoolRows.FirstOrDefault(r => r.Price == row.Strike);
+					}
+
+					if (dp != null)
+					{
+						var info = $"V:{FormatCompact(dp.Volume)} T:{FormatCompact(dp.TradeCount)}";
+					int infoX = xCenter + rightW + _darkPoolDetailsOffsetX;
+					int infoY = top - _barThicknessPx - 4 + _darkPoolDetailsOffsetY; // posicionar arriba del bar, alejado de líneas horizontales
+						context.DrawString(info, dpFont, Color.White, infoX, infoY);
+					}
+				}
 
                 // Previous markers (tip position of previous snapshot for Calls/Puts)
                 if (_showPrevMarkers)
@@ -1309,7 +1476,7 @@ namespace ATAS.Indicators.Technical
                 }
 
                 // Net level (Calls - Puts) o GEX (Calls + Puts si Puts<0)
-                if (_showNetLevels)
+                if (_showNetLevels && !IsDarkPoolProfile)
                 {
                     var diff = _profileType == ProfileDataType.Gex
                         ? (row.Calls + row.Puts)
@@ -1518,7 +1685,7 @@ namespace ATAS.Indicators.Technical
                         var leftVal = _callsOnRight ? putsMag : callsMag;
                         var valTxt = leftVal.ToString(_valueFormat, CultureInfo.InvariantCulture);
                         int valW = EstimateTextWidth(valTxt, sideFont);
-                        int valX = xCenter - leftW - valW -6;
+                        int valX = xCenter - leftW - valW - _valueOffsetPx;
                         int valY = top -2;
                         context.DrawString(valTxt, sideFont, leftColor, valX, valY);
                     }
@@ -1528,7 +1695,7 @@ namespace ATAS.Indicators.Technical
                     {
                         var rightVal = _callsOnRight ? callsMag : putsMag;
                         var valTxt = rightVal.ToString(_valueFormat, CultureInfo.InvariantCulture);
-                        int valX = xCenter + rightW +6;
+                        int valX = xCenter + rightW + _valueOffsetPx;
                         int valY = top -2;
                         context.DrawString(valTxt, sideFont, rightColor, valX, valY);
                     }
@@ -1554,7 +1721,7 @@ namespace ATAS.Indicators.Technical
                 }
             }
 
-            if (_showTopSummary)
+            if (_showTopSummary && !IsDarkPoolProfile)
                 DrawTopSummary(context, xCenter, snapshot);
 
             // NUEVO: Dibujar Persistent Big Trades en el gráfico de precios (en coordenadas de strike)
@@ -1619,7 +1786,7 @@ namespace ATAS.Indicators.Technical
             }
 
             // Max lines
-            if (snapshot.Count >0)
+            if (snapshot.Count >0 && !IsDarkPoolProfile)
             {
                 var maxCallsRow = snapshot.OrderByDescending(r => _profileType == ProfileDataType.Gex ? Math.Abs(r.Calls) : r.Calls).FirstOrDefault();
                 var maxPutsRow = snapshot.OrderByDescending(r => _profileType == ProfileDataType.Gex ? Math.Abs(r.Puts) : r.Puts).FirstOrDefault();
@@ -1965,6 +2132,23 @@ namespace ATAS.Indicators.Technical
                     EnableConversion, EnableAutoConversion, QuotesCsvPath, ManualSpyPrice, ManualEsPrice, PriceStep,
                     CallsColumnKey, PutsColumnKey, out var lastPriceFromCsv, out var lastTsFromCsv);
 
+				List<StrikeRow>? darkPoolAsRows = null;
+			if (IsDarkPoolProfile)
+			{
+				darkPoolAsRows = LoadDarkPoolAsStrikeRows(FilePath, _darkPoolFileName,
+					_darkPoolMinNotional, _darkPoolGroupStep, _darkPoolMaxLevels, _darkPoolMaxDistanceFromPrice, _lastEsPrice,
+					out var dpErr, out var dpRows, out var nqFromChain);
+					lock (_sync)
+					{
+						_darkPoolRows.Clear();
+						_darkPoolRows.AddRange(dpRows);
+						_lastNqPriceFromCsv = nqFromChain;
+					}
+
+					if (!string.IsNullOrWhiteSpace(dpErr))
+						err = string.IsNullOrWhiteSpace(err) ? dpErr : (err + " | " + dpErr);
+				}
+
                 bool firstAutoInitNeeded;
                 lock (_sync)
                 {
@@ -1973,7 +2157,10 @@ namespace ATAS.Indicators.Technical
 
                     // Actualizar bases con SPY y valores
                     _baseRows.Clear();
-                    _baseRows.AddRange(data.Select(r => new StrikeRow
+                    var activeData = IsDarkPoolProfile
+                        ? (darkPoolAsRows ?? new List<StrikeRow>())
+                        : data;
+					_baseRows.AddRange(activeData.Select(r => new StrikeRow
                     {
                         Strike = r.Strike, // aquí r.Strike es SPY si autoconv está activo
                         StrikeSpy = r.StrikeSpy,
@@ -1986,11 +2173,11 @@ namespace ATAS.Indicators.Technical
 
                     firstAutoInitNeeded = _enableAutoConversion && _rows.Count == 0;
 
-                    if (!_enableAutoConversion)
+                    if (!_enableAutoConversion || IsDarkPoolProfile)
                     {
                         // Sin autoconversión: actualizar directamente lo visible
                         _rows.Clear();
-                        _rows.AddRange(data);
+						_rows.AddRange(activeData);
                     }
                 }
 
@@ -1998,7 +2185,7 @@ namespace ATAS.Indicators.Technical
                 _lastLoad = DateTime.Now;
 
                 // Autoconversión
-                if (_enableAutoConversion)
+                if (_enableAutoConversion && !IsDarkPoolProfile)
                 {
                     if (firstAutoInitNeeded)
                     {
@@ -2011,34 +2198,286 @@ namespace ATAS.Indicators.Technical
                                 _activeConvFactor = f.Value;
                                 ApplyConversionWithFactor(f.Value);
                             }
-                        }
-                        else if (_lastCsvPrice > 0 && _lastEsPrice > 0)
-                        {
-                            var f = SafeDiv(_lastEsPrice, _lastCsvPrice);
-                            if (f > 0)
-                            {
-                                _activeConvFactor = f;
-                                ApplyConversionWithFactor(f);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Mantener posiciones: re-aplicar conversión con el factor activo si existe (actualiza cantidades)
-                        if (_activeConvFactor.HasValue && _activeConvFactor.Value > 0)
-                        {
-                            ApplyConversionWithFactor(_activeConvFactor.Value);
-                        }
-                    }
-                }
+						}
+						else if (_lastCsvPrice > 0 && _lastEsPrice > 0)
+						{
+							var f = SafeDiv(_lastEsPrice, _lastCsvPrice);
+							if (f > 0)
+							{
+								_activeConvFactor = f;
+								ApplyConversionWithFactor(f);
+							}
+						}
+					}
+					else
+					{
+						if (_activeConvFactor.HasValue && _activeConvFactor.Value > 0)
+							ApplyConversionWithFactor(_activeConvFactor.Value);
+					}
+				}
 
-                RedrawChart();
-            }
-            catch (Exception ex)
-            {
-                _error = $"Load error: {ex.Message}";
-            }
-        }
+				RedrawChart();
+			}
+			catch (Exception ex)
+			{
+				_error = $"Load error: {ex.Message}";
+			}
+		}
+
+		private static List<StrikeRow> LoadDarkPoolAsStrikeRows(
+			string chainFilePath,
+			string darkPoolFileName,
+			decimal minNotional,
+			decimal groupStep,
+			int maxLevels,
+			decimal maxDistanceFromPrice,
+			decimal currentNqPrice,
+			out string? error,
+			out List<DarkPoolRow> rawRows,
+			out decimal nqFromChain)
+		{
+			error = null;
+			rawRows = new List<DarkPoolRow>();
+			nqFromChain = 0m;
+			var result = new List<StrikeRow>();
+
+			string? directory;
+			try
+			{
+				directory = string.IsNullOrWhiteSpace(chainFilePath)
+					? null
+					: (Path.IsPathRooted(chainFilePath) ? Path.GetDirectoryName(chainFilePath) : null);
+			}
+			catch
+			{
+				directory = null;
+			}
+
+			if (string.IsNullOrWhiteSpace(directory))
+			{
+				// Si no tenemos carpeta explícita, asumir estructura UnifiedInstrument (igual que QQQ)
+				var userDocuments = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+				var sessionDate = DateTime.Now.ToString("yyyy_MM_dd");
+				directory = Path.Combine(userDocuments, "dashcsv", "Dashdata", $"session_{sessionDate}", "UnifiedInstrument");
+			}
+
+			var preferredPath = @"C:\\Users\\jsest\\Desktop\\DarkPoolLevels.csv";
+			string darkPath = File.Exists(preferredPath)
+				? preferredPath
+				: Path.Combine(directory, darkPoolFileName);
+			if (!File.Exists(darkPath))
+			{
+				error = $"DarkPool CSV not found: {darkPath}";
+				return result;
+			}
+
+			// 1) Leer el último QQQ_Price y NQ_Price desde el chain para factor (NQ/QQQ)
+			try
+			{
+				string fullChainPath = chainFilePath;
+				if (!Path.IsPathRooted(fullChainPath))
+				{
+					var userDocuments = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+					var sessionDate = DateTime.Now.ToString("yyyy_MM_dd");
+					fullChainPath = Path.Combine(userDocuments, "dashcsv", "Dashdata", $"session_{sessionDate}", "UnifiedInstrument", chainFilePath);
+				}
+
+				if (File.Exists(fullChainPath))
+				{
+					var chainLines = File.ReadAllLines(fullChainPath);
+					if (chainLines.Length > 1)
+					{
+						var headers = SplitCsvLine(chainLines[0]);
+						int idxQqq = FindIndex(headers, "qqqprice");
+						int idxNq = FindIndex(headers, "nqprice");
+						for (int i = chainLines.Length - 1; i >= 1; i--)
+						{
+							if (string.IsNullOrWhiteSpace(chainLines[i]))
+								continue;
+							var cols = SplitCsvLine(chainLines[i]);
+							if (cols.Length <= Math.Max(idxQqq, idxNq))
+								continue;
+							if (idxQqq >= 0 && idxNq >= 0 && TryParseDecimal(cols[idxQqq], out var qqq) && qqq > 0 && TryParseDecimal(cols[idxNq], out var nq) && nq > 0)
+							{
+								nqFromChain = nq;
+								var factor = SafeDiv(nq, qqq);
+								if (factor <= 0)
+									break;
+								// guardamos el factor en una variable local para usar en el parse
+								// (se pasa a result vía closure)
+								// parse DarkPool debajo
+								break;
+							}
+						}
+					}
+				}
+			}
+			catch
+			{
+				// si falla, error queda para el parse principal de darkpool
+			}
+
+			decimal factorNqOverQqq = 0m;
+			try
+			{
+				// re-abrir chain para extraer factor (si no lo conseguimos arriba, queda 0)
+				string fullChainPath = chainFilePath;
+				if (!Path.IsPathRooted(fullChainPath))
+				{
+					var userDocuments = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+					var sessionDate = DateTime.Now.ToString("yyyy_MM_dd");
+					fullChainPath = Path.Combine(userDocuments, "dashcsv", "Dashdata", $"session_{sessionDate}", "UnifiedInstrument", chainFilePath);
+				}
+				if (File.Exists(fullChainPath))
+				{
+					var chainLines = File.ReadAllLines(fullChainPath);
+					if (chainLines.Length > 1)
+					{
+						var headers = SplitCsvLine(chainLines[0]);
+						int idxQqq = FindIndex(headers, "qqqprice");
+						int idxNq = FindIndex(headers, "nqprice");
+						for (int i = chainLines.Length - 1; i >= 1; i--)
+						{
+							if (string.IsNullOrWhiteSpace(chainLines[i]))
+								continue;
+							var cols = SplitCsvLine(chainLines[i]);
+							if (cols.Length <= Math.Max(idxQqq, idxNq))
+								continue;
+							if (idxQqq >= 0 && idxNq >= 0 && TryParseDecimal(cols[idxQqq], out var qqq) && qqq > 0 && TryParseDecimal(cols[idxNq], out var nq) && nq > 0)
+							{
+								factorNqOverQqq = SafeDiv(nq, qqq);
+								break;
+							}
+						}
+					}
+				}
+			}
+			catch
+			{
+				factorNqOverQqq = 0m;
+			}
+
+			if (factorNqOverQqq <= 0)
+			{
+				// Fallback: usar factor 1 (dejar precios en QQQ) para no abortar la carga
+				factorNqOverQqq = 1m;
+				if (string.IsNullOrEmpty(error))
+					error = "NQ/QQQ factor not found in chain; using factor=1 (QQQ prices).";
+				else
+					error += " | NQ/QQQ factor not found in chain; using factor=1 (QQQ prices).";
+			}
+
+			// 2) Cargar DarkPoolLevels.csv y mapear price->NQ usando factor
+			try
+			{
+				var lines = File.ReadAllLines(darkPath);
+				if (lines.Length <= 1)
+				{
+					error = "DarkPool CSV empty";
+					return result;
+				}
+
+				var headers = SplitCsvLine(lines[0]);
+				int idxPrice = FindIndex(headers, "price");
+				int idxNotional = FindIndex(headers, "notional_value");
+				int idxVol = FindIndex(headers, "volume");
+				int idxTrades = FindIndex(headers, "trade_count");
+				if (idxPrice < 0 || idxNotional < 0)
+				{
+					error = "DarkPool headers not recognized. Expected: price, notional_value, volume, trade_count";
+					return result;
+				}
+
+				var agg = new Dictionary<decimal, (decimal notional, decimal vol, decimal trades)>();
+				for (int i = 1; i < lines.Length; i++)
+				{
+					if (string.IsNullOrWhiteSpace(lines[i]))
+						continue;
+					var cols = SplitCsvLine(lines[i]);
+					if (cols.Length <= Math.Max(idxPrice, Math.Max(idxNotional, Math.Max(idxVol, idxTrades))))
+						continue;
+
+					if (!TryParseDecimal(cols[idxPrice], out var pQqq) || pQqq <= 0)
+						continue;
+					if (!TryParseDecimal(cols[idxNotional], out var notional))
+						notional = 0m;
+					TryParseDecimal(idxVol >= 0 && idxVol < cols.Length ? cols[idxVol] : null, out var vol);
+					TryParseDecimal(idxTrades >= 0 && idxTrades < cols.Length ? cols[idxTrades] : null, out var trades);
+
+					var pNq = pQqq * factorNqOverQqq;
+					if (!agg.TryGetValue(pNq, out var t))
+						agg[pNq] = (notional, vol, trades);
+					else
+						agg[pNq] = (t.notional + notional, t.vol + vol, t.trades + trades);
+				}
+
+			if (agg.Count > 0)
+			{
+				foreach (var kv in agg)
+				{
+					rawRows.Add(new DarkPoolRow
+					{
+						Price = kv.Key,
+						Notional = kv.Value.notional,
+						Volume = kv.Value.vol,
+						TradeCount = kv.Value.trades
+					});
+				}
+			}
+
+			// Opcional: agrupar precios por step
+			if (groupStep > 0)
+			{
+				var grouped = new Dictionary<decimal, (decimal notional, decimal vol, decimal trades)>();
+				foreach (var r in rawRows)
+				{
+					var bucket = FloorToStep(r.Price, groupStep);
+					if (!grouped.TryGetValue(bucket, out var t))
+						grouped[bucket] = (r.Notional, r.Volume, r.TradeCount);
+					else
+						grouped[bucket] = (t.notional + r.Notional, t.vol + r.Volume, t.trades + r.TradeCount);
+				}
+
+				rawRows = grouped.Select(kv => new DarkPoolRow
+				{
+					Price = kv.Key,
+					Notional = kv.Value.notional,
+					Volume = kv.Value.vol,
+					TradeCount = kv.Value.trades
+				}).ToList();
+			}
+
+			// Apply filters
+				IEnumerable<DarkPoolRow> filtered = rawRows;
+				if (minNotional > 0)
+					filtered = filtered.Where(r => r.Notional >= minNotional);
+
+				if (maxDistanceFromPrice > 0 && currentNqPrice > 0)
+					filtered = filtered.Where(r => Math.Abs(r.Price - currentNqPrice) <= maxDistanceFromPrice);
+
+				filtered = filtered.OrderByDescending(r => r.Notional);
+				if (maxLevels > 0)
+					filtered = filtered.Take(maxLevels);
+
+				// Mapear a StrikeRow: Calls=Notional, Puts=0, Strike = price NQ
+				foreach (var r in filtered)
+				{
+					result.Add(new StrikeRow
+					{
+						Strike = r.Price,
+						StrikeSpy = r.Price,
+						Calls = r.Notional,
+						Puts = 0m
+					});
+				}
+				return result;
+			}
+			catch (Exception ex)
+			{
+				error = $"DarkPool parse error: {ex.Message}";
+				return result;
+			}
+		}
 
         private void ApplyConversionWithFactor(decimal factor)
         {
@@ -2084,7 +2523,7 @@ namespace ATAS.Indicators.Technical
 
         private void RecalculateConversionPositions()
         {
-            if (!_enableAutoConversion)
+            if (!_enableAutoConversion || IsDarkPoolProfile)
                 return;
 
             decimal basePrice = _lastCsvPrice;
@@ -2119,6 +2558,9 @@ namespace ATAS.Indicators.Technical
             try
             {
                 if (!_enableAutoConversion)
+                    return;
+
+                if (IsDarkPoolProfile)
                     return;
 
                 if (_autoConvUseTimestamp)
@@ -2262,6 +2704,14 @@ namespace ATAS.Indicators.Technical
 
                     string? tsRaw = idxTs >= 0 && idxTs < cols.Length ? cols[idxTs]?.Trim('"', ' ') : null;
 
+                    // Capturar siempre el último QQQ_Price/timestamp disponible (más reciente en el CSV)
+                    if (idxQqqPrice >= 0 && idxQqqPrice < cols.Length && TryParseDecimal(cols[idxQqqPrice], out var qqq) && qqq > 0)
+                    {
+                        lastPrice = qqq;
+                        if (idxTs >= 0 && tsRaw != null && DateTime.TryParse(tsRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var tsdt))
+                            lastTimestamp = tsdt;
+                    }
+
                     if (useLatestTimestamp && idxTs >= 0)
                     {
                         if (!string.Equals(tsRaw, maxTsRaw, StringComparison.Ordinal))
@@ -2271,14 +2721,6 @@ namespace ATAS.Indicators.Technical
                     if (!TryParseDecimal(cols[idxStrike], out var strikeQqq)) continue; // QQQ strike
                     if (!TryParseDecimal(cols[idxCalls], out var calls)) calls = 0;
                     if (!TryParseDecimal(cols[idxPuts], out var puts)) puts = 0;
-
-                    // Capturar último QQQ_Price para autoconversión y timestamp
-                    if (idxQqqPrice >= 0 && idxQqqPrice < cols.Length && TryParseDecimal(cols[idxQqqPrice], out var qqq) && qqq > 0)
-                    {
-                        lastPrice = qqq;
-                        if (idxTs >= 0 && tsRaw != null && DateTime.TryParse(tsRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var tsdt))
-                            lastTimestamp = tsdt;
-                    }
 
                     // Cuando la conversión manual (EnableConversion) esté activa y NO hay autoconversión
                     decimal factor = 1m;
@@ -2359,6 +2801,7 @@ namespace ATAS.Indicators.Technical
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     var cols = SplitCsvLine(line);
                     if (cols.Length <= Math.Max(idxTs, Math.Max(idxSpy, idxEs))) continue;
+
                     var tsRaw = cols[idxTs]?.Trim('"', ' ');
                     if (string.IsNullOrEmpty(tsRaw)) continue;
 
@@ -2385,6 +2828,14 @@ namespace ATAS.Indicators.Technical
             return a / b;
         }
 
+		private static decimal FloorToStep(decimal price, decimal step)
+		{
+			if (step <= 0)
+				return price;
+			var q = Math.Floor(price / step);
+			return q * step;
+		}
+
         private static decimal RoundToStep(decimal price, decimal step)
         {
             if (step <=0) return price;
@@ -2410,6 +2861,10 @@ namespace ATAS.Indicators.Technical
         private static string[] SplitCsvLine(string line)
         {
             // Simple CSV splitter supporting quoted fields
+            // Soporta CSV estándar y también TSV (tab) simple.
+            if (line.Contains('\t') && !line.Contains(','))
+                return line.Split('\t');
+
             var list = new List<string>();
             bool inQuotes = false;
             var cur = new System.Text.StringBuilder();

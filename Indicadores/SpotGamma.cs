@@ -1,4 +1,4 @@
-using System;
+Ôªøusing System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
@@ -40,7 +40,7 @@ namespace ATAS.Indicators.Technical
         }
         #endregion
 
-        #region Manual Levels (siempre primeros en el men˙)
+        #region Manual Levels (siempre primeros en el men√∫)
         // Nivel 1
         private bool _m1Enabled;
         private decimal _m1Price;
@@ -69,7 +69,7 @@ namespace ATAS.Indicators.Technical
         [Display(GroupName = "0. Manual Levels", Name = "Nivel 1 - Estilo", Order = 6)]
         public DashStyle Manual1Style { get => _m1Style; set { _m1Style = value; UpdateIndicator(); } }
 
-        [Display(GroupName = "0. Manual Levels", Name = "Nivel 1 - TamaÒo texto", Order = 7)]
+        [Display(GroupName = "0. Manual Levels", Name = "Nivel 1 - Tama√±o texto", Order = 7)]
         [Range(6, 60)]
         public int Manual1FontSize { get => _m1FontSize; set { _m1FontSize = Math.Max(6, value); UpdateIndicator(); } }
 
@@ -101,7 +101,7 @@ namespace ATAS.Indicators.Technical
         [Display(GroupName = "0. Manual Levels", Name = "Nivel 2 - Estilo", Order = 16)]
         public DashStyle Manual2Style { get => _m2Style; set { _m2Style = value; UpdateIndicator(); } }
 
-        [Display(GroupName = "0. Manual Levels", Name = "Nivel 2 - TamaÒo texto", Order = 17)]
+        [Display(GroupName = "0. Manual Levels", Name = "Nivel 2 - Tama√±o texto", Order = 17)]
         [Range(6, 60)]
         public int Manual2FontSize { get => _m2FontSize; set { _m2FontSize = Math.Max(6, value); UpdateIndicator(); } }
 
@@ -133,7 +133,7 @@ namespace ATAS.Indicators.Technical
         [Display(GroupName = "0. Manual Levels", Name = "Nivel 3 - Estilo", Order = 26)]
         public DashStyle Manual3Style { get => _m3Style; set { _m3Style = value; UpdateIndicator(); } }
 
-        [Display(GroupName = "0. Manual Levels", Name = "Nivel 3 - TamaÒo texto", Order = 27)]
+        [Display(GroupName = "0. Manual Levels", Name = "Nivel 3 - Tama√±o texto", Order = 27)]
         [Range(6, 60)]
         public int Manual3FontSize { get => _m3FontSize; set { _m3FontSize = Math.Max(6, value); UpdateIndicator(); } }
 
@@ -165,7 +165,7 @@ namespace ATAS.Indicators.Technical
         [Display(GroupName = "0. Manual Levels", Name = "Nivel 4 - Estilo", Order = 36)]
         public DashStyle Manual4Style { get => _m4Style; set { _m4Style = value; UpdateIndicator(); } }
 
-        [Display(GroupName = "0. Manual Levels", Name = "Nivel 4 - TamaÒo texto", Order = 37)]
+        [Display(GroupName = "0. Manual Levels", Name = "Nivel 4 - Tama√±o texto", Order = 37)]
         [Range(6, 60)]
         public int Manual4FontSize { get => _m4FontSize; set { _m4FontSize = Math.Max(6, value); UpdateIndicator(); } }
 
@@ -197,7 +197,7 @@ namespace ATAS.Indicators.Technical
         [Display(GroupName = "0. Manual Levels", Name = "Nivel 5 - Estilo", Order = 46)]
         public DashStyle Manual5Style { get => _m5Style; set { _m5Style = value; UpdateIndicator(); } }
 
-        [Display(GroupName = "0. Manual Levels", Name = "Nivel 5 - TamaÒo texto", Order = 47)]
+        [Display(GroupName = "0. Manual Levels", Name = "Nivel 5 - Tama√±o texto", Order = 47)]
         [Range(6, 60)]
         public int Manual5FontSize { get => _m5FontSize; set { _m5FontSize = Math.Max(6, value); UpdateIndicator(); } }
         #endregion
@@ -235,6 +235,32 @@ namespace ATAS.Indicators.Technical
             set
             {
                 _mostrarEtiquetas = value;
+                UpdateIndicator();
+            }
+        }
+
+        private int _dateLabelOffsetY = 10;
+        [Display(GroupName = "2. Appearance", Name = "Date label offset Y (px)", Order = 12)]
+        [Range(-2000, 2000)]
+        public int DateLabelOffsetY
+        {
+            get => _dateLabelOffsetY;
+            set
+            {
+                _dateLabelOffsetY = Math.Clamp(value, -2000, 2000);
+                UpdateIndicator();
+            }
+        }
+
+        public enum DateLabelAlignment { Left, Center, Right }
+        private DateLabelAlignment _dateAlignment = DateLabelAlignment.Left;
+        [Display(GroupName = "2. Appearance", Name = "Date label alignment", Order = 13)]
+        public DateLabelAlignment DateAlignment
+        {
+            get => _dateAlignment;
+            set
+            {
+                _dateAlignment = value;
                 UpdateIndicator();
             }
         }
@@ -1004,6 +1030,7 @@ namespace ATAS.Indicators.Technical
         private readonly Dictionary<string, decimal> _levels = new Dictionary<string, decimal>();
         private bool _loaded = false;
         private string _errorMessage = string.Empty;
+        private string _fileDateText = string.Empty;
         private readonly string[] _levelOrder = new[] { "cw", "c1", "c2", "c3", "c4", "l1", "l2", "l3", "l4", "pw", "vt", "zg" };
 
         public SpotGammaLevels()
@@ -1019,8 +1046,8 @@ namespace ATAS.Indicators.Technical
             var currentSymbol = InstrumentInfo?.Instrument?.ToUpperInvariant() ?? Instrument?.ToUpperInvariant() ?? string.Empty;
             if (string.IsNullOrEmpty(currentSymbol))
             {
-                _errorMessage = "No se pudo obtener el instrumento del gr·fico.";
-                // Aun asÌ, construimos niveles manuales
+                _errorMessage = "No se pudo obtener el instrumento del gr√°fico.";
+                // Aun as√≠, construimos niveles manuales
                 UpdateIndicator();
                 return;
             }
@@ -1035,7 +1062,7 @@ namespace ATAS.Indicators.Technical
             void Add(bool enabled, decimal price, string label, Color color, int thick, DashStyle style, int fontSize)
             {
                 if (!enabled) return;
-                // No hay validaciÛn de precio - se acepta cualquier valor decimal
+                // No hay validaci√≥n de precio - se acepta cualquier valor decimal
 
                 _niveles.Add(new Nivel
                 {
@@ -1066,7 +1093,7 @@ namespace ATAS.Indicators.Technical
             // 1) Manuales primero
             AddManualLevels();
 
-            // 2) Archivo si est· cargado
+            // 2) Archivo si est√° cargado
             if (_loaded)
             {
                 foreach (var key in _levelOrder)
@@ -1240,6 +1267,30 @@ namespace ATAS.Indicators.Technical
                 return;
             }
 
+            // Mostrar fecha del archivo cargado (si existe)
+            if (_loaded && !string.IsNullOrEmpty(_fileDateText))
+            {
+                var dateFont = new RenderFont("Arial", 9);
+                var dateText = $"SpotGamma fecha: {_fileDateText}";
+                int textW = EstimateTextWidth(dateText, dateFont);
+                int y = 10 + _dateLabelOffsetY;
+                int x = 10;
+                switch (_dateAlignment)
+                {
+                    case DateLabelAlignment.Center:
+                        x = (ChartInfo.Region.Width - textW) / 2;
+                        break;
+                    case DateLabelAlignment.Right:
+                        x = Math.Max(0, ChartInfo.Region.Width - textW - 10);
+                        break;
+                    case DateLabelAlignment.Left:
+                    default:
+                        x = 10;
+                        break;
+                }
+                context.DrawString(dateText, dateFont, Color.Gray, x, y);
+            }
+
             bool hasManual = HasAnyManualEnabled();
 
             if (!string.IsNullOrEmpty(_errorMessage) && !hasManual)
@@ -1250,15 +1301,15 @@ namespace ATAS.Indicators.Technical
 
             if (!_loaded && !hasManual)
             {
-                context.DrawString("No se cargaron niveles. Verifique el archivo o sÌmbolo.", new RenderFont("Arial", 10), Color.Red, 10, 30);
+                context.DrawString("No se cargaron niveles. Verifique el archivo o s√≠mbolo.", new RenderFont("Arial", 10), Color.Red, 10, 30);
                 return;
             }
 
             var xPos = ChartInfo.PriceChartContainer.GetXByBar(CurrentBar, false);
 
-            // Asegurar que _niveles refleja el estado actual (por si cambiÛ algo en propiedades)
-            // No recargamos archivo aquÌ para evitar IO en render; solo reconstruimos lista manual si procede.
-            // UpdateIndicator ya se invoca en setters; aquÌ asumimos _niveles listo.
+            // Asegurar que _niveles refleja el estado actual (por si cambi√≥ algo en propiedades)
+            // No recargamos archivo aqu√≠ para evitar IO en render; solo reconstruimos lista manual si procede.
+            // UpdateIndicator ya se invoca en setters; aqu√≠ asumimos _niveles listo.
 
             var groupedLevels = GetGroupedLevels();
 
@@ -1296,12 +1347,16 @@ namespace ATAS.Indicators.Technical
             {
                 _errorMessage = $"Archivo no encontrado: {FilePath}";
                 _loaded = false;
+                _fileDateText = string.Empty;
                 return;
             }
 
             try
             {
                 string content = File.ReadAllText(FilePath);
+                // Capturar fecha de encabezado (l√≠nea que empieza con '# YYYY-MM-DD ...')
+                var dateMatch = Regex.Match(content, @"^#\s*(\d{4}-\d{2}-\d{2}[^\r\n]*)", RegexOptions.Multiline);
+                _fileDateText = dateMatch.Success ? dateMatch.Groups[1].Value.Trim() : string.Empty;
                 Regex regex = new Regex(@"def (\w+)_(\w+) = ([\d\.]+|Double\.NaN);");
                 var allLevels = new Dictionary<string, Dictionary<string, decimal>>();
 
@@ -1328,14 +1383,16 @@ namespace ATAS.Indicators.Technical
                 }
                 else
                 {
-                    _errorMessage = $"No se encontraron niveles para el sÌmbolo: {currentSymbol}";
+                    _errorMessage = $"No se encontraron niveles para el s√≠mbolo: {currentSymbol}";
                     _loaded = false;
+                    _fileDateText = string.Empty;
                 }
             }
             catch (Exception ex)
             {
                 _errorMessage = $"Error al cargar niveles: {ex.Message}";
                 _loaded = false;
+                _fileDateText = string.Empty;
             }
         }
 
@@ -1345,6 +1402,13 @@ namespace ATAS.Indicators.Technical
             string[] known = { "SPX", "SPY", "QQQ", "NDX", "IWM", "RUT", "ES", "NQ", "RTY" };
             foreach (var k in known) if (symbol.Contains(k)) return k;
             return null;
+        }
+
+        private static int EstimateTextWidth(string text, RenderFont font)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            double factor = 0.58; // heur√≠stica simple
+            return (int)Math.Ceiling(text.Length * (font.Size * factor));
         }
         #endregion
         #endregion
