@@ -17,6 +17,33 @@ using OFT.Rendering.Tools;
 
 namespace ATAS.Indicators.Technical
 {
+    /// <summary>
+    /// GexBot Classic Profile - Advanced Gamma Exposure (GEX) Visualization Indicator
+    /// 
+    /// This indicator displays real-time GEX data from the GexBot API, providing:
+    /// • Visual GEX profile with positive/negative bars at each strike
+    /// • Key levels: Zero Gamma, Major Positive, Major Negative strikes
+    /// • Multi-timeframe comparison (1/5/10/15/30 min)
+    /// • Alerts for significant GEX changes with sound notifications
+    /// • GEX clusters detection for Support/Resistance identification
+    /// • Statistical analysis with GEX Score (-100 to +100)
+    /// • Price targets based on gamma levels
+    /// • Session awareness with 0DTE highlighting
+    /// • Data export to CSV/TXT
+    /// 
+    /// Configuration is organized into 23 sections across 5 categories:
+    /// 📁 CONFIGURATION: API, Price Conversion
+    /// 📁 VISUALIZATION: Position, Bars, Labels, Levels, Panels, Grid
+    /// 📁 ANALYSIS: Alerts, Arrows, Zones, Sparklines, History
+    /// 📁 TOOLS: Sound, Filter, MTF, Export, Clusters, Statistics, Targets
+    /// 📁 ADVANCED: Session, Themes, Diagnostics
+    /// 
+    /// Requires a valid GexBot API key. See README.md for detailed documentation.
+    /// </summary>
+    /// <remarks>
+    /// Version: 2.0 Beta 2
+    /// Compatible with: QQQ, SPY, SPX, NDX, NQ, ES, and major tech stocks
+    /// </remarks>
     [DisplayName("GexBot Classic Profile")]
     public class GexBotClassicProfile : Indicator
     {
@@ -75,6 +102,58 @@ namespace ATAS.Indicators.Technical
             public bool IsIncrease { get; set; }
             public string TimePeriod { get; set; } = string.Empty;
         }
+
+        private class GexCluster
+        {
+            public decimal CenterStrike { get; set; }
+            public decimal StartStrike { get; set; }
+            public decimal EndStrike { get; set; }
+            public decimal TotalGex { get; set; }
+            public decimal AverageGex { get; set; }
+            public int StrikeCount { get; set; }
+            public bool IsPositive { get; set; }
+            public decimal Strength { get; set; } // 0-100 normalized strength
+        }
+
+        private class GexStatistics
+        {
+            public decimal Mean { get; set; }
+            public decimal StdDev { get; set; }
+            public decimal Min { get; set; }
+            public decimal Max { get; set; }
+            public decimal P25 { get; set; }
+            public decimal P50 { get; set; }
+            public decimal P75 { get; set; }
+            public decimal PositiveSum { get; set; }
+            public decimal NegativeSum { get; set; }
+            public int PositiveCount { get; set; }
+            public int NegativeCount { get; set; }
+            public decimal PosNegRatio { get; set; }
+            public decimal GexScore { get; set; } // -100 to +100 score
+        }
+
+        private class PriceTarget
+        {
+            public decimal Price { get; set; }
+            public string Name { get; set; } = string.Empty;
+            public decimal Distance { get; set; }
+            public decimal DistancePercent { get; set; }
+            public decimal Attraction { get; set; } // Strength of attraction 0-100
+            public Color Color { get; set; }
+        }
+
+        private class ApiDiagnostics
+        {
+            public DateTime? LastSuccessTime { get; set; }
+            public DateTime? LastErrorTime { get; set; }
+            public int SuccessCount { get; set; }
+            public int ErrorCount { get; set; }
+            public double LastLatencyMs { get; set; }
+            public double AverageLatencyMs { get; set; }
+            public string LastErrorMessage { get; set; } = string.Empty;
+            public List<(DateTime Time, string Message)> ActivityLog { get; set; } = new();
+            public bool IsConnected { get; set; }
+        }
         #endregion
 
         #region Fields
@@ -91,11 +170,27 @@ namespace ATAS.Indicators.Technical
         private DateTime _lastPulseTime = DateTime.Now;
         private int _totalStrikesCount;
         private int _filteredStrikesCount;
+
+        // Section 18: GEX Clusters
+        private List<GexCluster> _gexClusters = new();
+
+        // Section 19: Statistics
+        private GexStatistics? _gexStatistics;
+
+        // Section 20: Price Targets
+        private List<PriceTarget> _priceTargets = new();
+
+        // Section 23: API Diagnostics
+        private ApiDiagnostics _apiDiagnostics = new();
+        private System.Diagnostics.Stopwatch _apiStopwatch = new();
+        private readonly Queue<double> _latencyHistory = new();
+        private const int MaxLatencyHistory = 20;
         #endregion
 
         #region API Settings
         private string _apiKey = string.Empty;
-        [Display(GroupName = "1. API Settings", Name = "API Key", Order = 10)]
+        /// <summary>API Key for GexBot service authentication</summary>
+        [Display(GroupName = "01. 🔑 API Configuration", Name = "API Key", Description = "Your GexBot API key for authentication", Order = 10)]
         public string ApiKey
         {
             get => _apiKey;
@@ -104,7 +199,7 @@ namespace ATAS.Indicators.Technical
 
         public enum TickerType { QQQ, SPY, SPX, NDX, NQ_NDX, ES_SPX, AAPL, NVDA, TSLA, AMD, AMZN, META, MSFT, GOOGL }
         private TickerType _ticker = TickerType.QQQ;
-        [Display(GroupName = "1. API Settings", Name = "Ticker", Order = 20)]
+        [Display(GroupName = "01. 🔑 API Configuration", Name = "Ticker", Description = "Symbol to fetch GEX data for", Order = 20)]
         public TickerType Ticker
         {
             get => _ticker;
@@ -113,7 +208,7 @@ namespace ATAS.Indicators.Technical
 
         public enum AggregationPeriod { full, zero, one }
         private AggregationPeriod _aggregation = AggregationPeriod.zero;
-        [Display(GroupName = "1. API Settings", Name = "Aggregation (DTE)", Order = 30)]
+        [Display(GroupName = "01. 🔑 API Configuration", Name = "Aggregation (DTE)", Description = "Days to expiration filter: full=all, zero=0DTE, one=1DTE", Order = 30)]
         public AggregationPeriod Aggregation
         {
             get => _aggregation;
@@ -121,7 +216,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _refreshSeconds = 60;
-        [Display(GroupName = "1. API Settings", Name = "Refresh (sec)", Order = 40)]
+        [Display(GroupName = "01. 🔑 API Configuration", Name = "Refresh Interval (sec)", Description = "Data refresh interval in seconds", Order = 40)]
         [Range(1, 3600)]
         public int RefreshSeconds
         {
@@ -131,7 +226,7 @@ namespace ATAS.Indicators.Technical
 
         public enum GexDataSource { Volume, OpenInterest }
         private GexDataSource _dataSource = GexDataSource.Volume;
-        [Display(GroupName = "1. API Settings", Name = "GEX Data Source", Order = 50)]
+        [Display(GroupName = "01. 🔑 API Configuration", Name = "GEX Data Source", Description = "Use Volume-based or Open Interest-based GEX", Order = 50)]
         public GexDataSource DataSource
         {
             get => _dataSource;
@@ -141,7 +236,8 @@ namespace ATAS.Indicators.Technical
 
         #region Conversion Settings
         private bool _enableConversion = true;
-        [Display(GroupName = "2. Conversion", Name = "Enable price conversion", Order = 10)]
+        /// <summary>Enable price conversion for futures/ETF mapping</summary>
+        [Display(GroupName = "02. 🔄 Price Conversion", Name = "Enable Conversion", Description = "Convert spot prices to chart prices (for futures)", Order = 10)]
         public bool EnableConversion
         {
             get => _enableConversion;
@@ -149,7 +245,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _conversionFactor = 1.0m;
-        [Display(GroupName = "2. Conversion", Name = "Conversion factor (chart/spot)", Order = 20)]
+        [Display(GroupName = "02. 🔄 Price Conversion", Name = "Conversion Factor", Description = "Manual factor: chart_price = spot * factor", Order = 20)]
         public decimal ConversionFactor
         {
             get => _conversionFactor;
@@ -157,7 +253,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _autoCalculateFactor = true;
-        [Display(GroupName = "2. Conversion", Name = "Auto-calculate factor from chart", Order = 30)]
+        [Display(GroupName = "02. 🔄 Price Conversion", Name = "Auto-Calculate Factor", Description = "Automatically calculate factor from current chart price", Order = 30)]
         public bool AutoCalculateFactor
         {
             get => _autoCalculateFactor;
@@ -165,7 +261,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _priceStep = 0.25m;
-        [Display(GroupName = "2. Conversion", Name = "Price step (rounding)", Order = 40)]
+        [Display(GroupName = "02. 🔄 Price Conversion", Name = "Price Step", Description = "Rounding step for converted prices (e.g., 0.25)", Order = 40)]
         public decimal PriceStep
         {
             get => _priceStep;
@@ -175,7 +271,8 @@ namespace ATAS.Indicators.Technical
 
         #region Profile Position
         private int _centerOffsetPx = 0;
-        [Display(GroupName = "3. Position", Name = "Center offset (px)", Order = 10)]
+        /// <summary>Horizontal offset for GEX profile center</summary>
+        [Display(GroupName = "03. 📍 Profile Position", Name = "Center Offset (px)", Description = "Horizontal offset from current bar in pixels", Order = 10)]
         [Range(-5000, 5000)]
         public int CenterOffsetPx
         {
@@ -184,7 +281,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showCenterLine = true;
-        [Display(GroupName = "3. Position", Name = "Show center line", Order = 20)]
+        [Display(GroupName = "03. 📍 Profile Position", Name = "Show Center Line", Description = "Display vertical center line", Order = 20)]
         public bool ShowCenterLine
         {
             get => _showCenterLine;
@@ -192,7 +289,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _centerLineColor = Color.FromArgb(140, Color.Yellow);
-        [Display(GroupName = "3. Position", Name = "Center line color", Order = 30)]
+        [Display(GroupName = "03. 📍 Profile Position", Name = "Center Line Color", Order = 30)]
         public Color CenterLineColor
         {
             get => _centerLineColor;
@@ -200,7 +297,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _centerLineThickness = 1;
-        [Display(GroupName = "3. Position", Name = "Center line thickness", Order = 40)]
+        [Display(GroupName = "03. 📍 Profile Position", Name = "Center Line Thickness", Order = 40)]
         [Range(1, 10)]
         public int CenterLineThickness
         {
@@ -211,7 +308,8 @@ namespace ATAS.Indicators.Technical
 
         #region Profile Appearance
         private int _maxBarWidthPx = 300;
-        [Display(GroupName = "4. Appearance", Name = "Max bar width (px)", Order = 10)]
+        /// <summary>Maximum bar width in pixels</summary>
+        [Display(GroupName = "04. 📊 Bar Appearance", Name = "Max Bar Width (px)", Description = "Maximum width for GEX bars", Order = 10)]
         [Range(50, 1500)]
         public int MaxBarWidthPx
         {
@@ -220,7 +318,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _barThicknessPx = 8;
-        [Display(GroupName = "4. Appearance", Name = "Bar thickness (px)", Order = 20)]
+        [Display(GroupName = "04. 📊 Bar Appearance", Name = "Bar Thickness (px)", Description = "Height of each GEX bar", Order = 20)]
         [Range(2, 50)]
         public int BarThicknessPx
         {
@@ -229,7 +327,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _positiveGexColor = Color.FromArgb(200, 0, 200, 100);
-        [Display(GroupName = "4. Appearance", Name = "Positive GEX color", Order = 30)]
+        [Display(GroupName = "04. 📊 Bar Appearance", Name = "Positive GEX Color", Description = "Color for positive gamma exposure bars", Order = 30)]
         public Color PositiveGexColor
         {
             get => _positiveGexColor;
@@ -237,7 +335,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _negativeGexColor = Color.FromArgb(200, 200, 60, 60);
-        [Display(GroupName = "4. Appearance", Name = "Negative GEX color", Order = 40)]
+        [Display(GroupName = "04. 📊 Bar Appearance", Name = "Negative GEX Color", Description = "Color for negative gamma exposure bars", Order = 40)]
         public Color NegativeGexColor
         {
             get => _negativeGexColor;
@@ -245,7 +343,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _fillOpacity = 180;
-        [Display(GroupName = "4. Appearance", Name = "Fill opacity", Order = 50)]
+        [Display(GroupName = "04. 📊 Bar Appearance", Name = "Fill Opacity", Description = "Transparency of bar fill (0-255)", Order = 50)]
         [Range(0, 255)]
         public int FillOpacity
         {
@@ -254,7 +352,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showBarOutline = true;
-        [Display(GroupName = "4. Appearance", Name = "Show bar outline", Order = 60)]
+        [Display(GroupName = "04. 📊 Bar Appearance", Name = "Show Bar Outline", Order = 60)]
         public bool ShowBarOutline
         {
             get => _showBarOutline;
@@ -262,7 +360,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _outlineThickness = 1;
-        [Display(GroupName = "4. Appearance", Name = "Outline thickness", Order = 70)]
+        [Display(GroupName = "04. 📊 Bar Appearance", Name = "Outline Thickness", Order = 70)]
         [Range(1, 5)]
         public int OutlineThickness
         {
@@ -273,7 +371,8 @@ namespace ATAS.Indicators.Technical
 
         #region Value Labels
         private bool _showValues = true;
-        [Display(GroupName = "5. Value Labels", Name = "Show GEX values", Order = 10)]
+        /// <summary>Show GEX values next to bars</summary>
+        [Display(GroupName = "05. 🏷️ Labels & Values", Name = "Show GEX Values", Description = "Display numeric GEX values on bars", Order = 10)]
         public bool ShowValues
         {
             get => _showValues;
@@ -281,7 +380,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _valueFontSize = 8;
-        [Display(GroupName = "5. Value Labels", Name = "Font size", Order = 20)]
+        [Display(GroupName = "05. 🏷️ Labels & Values", Name = "Font Size", Order = 20)]
         [Range(6, 20)]
         public int ValueFontSize
         {
@@ -290,7 +389,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _valueTextColor = Color.White;
-        [Display(GroupName = "5. Value Labels", Name = "Text color", Order = 30)]
+        [Display(GroupName = "05. 🏷️ Labels & Values", Name = "Value Text Color", Order = 30)]
         public Color ValueTextColor
         {
             get => _valueTextColor;
@@ -298,7 +397,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _valueOffsetPx = 4;
-        [Display(GroupName = "5. Value Labels", Name = "Value offset (px)", Order = 40)]
+        [Display(GroupName = "05. 🏷️ Labels & Values", Name = "Value Offset (px)", Order = 40)]
         [Range(0, 100)]
         public int ValueOffsetPx
         {
@@ -307,7 +406,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showStrikeLabels = true;
-        [Display(GroupName = "5. Value Labels", Name = "Show strike labels", Order = 50)]
+        [Display(GroupName = "05. 🏷️ Labels & Values", Name = "Show Strike Labels", Description = "Display strike prices on bars", Order = 50)]
         public bool ShowStrikeLabels
         {
             get => _showStrikeLabels;
@@ -315,7 +414,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _strikeTextColor = Color.LightGray;
-        [Display(GroupName = "5. Value Labels", Name = "Strike text color", Order = 60)]
+        [Display(GroupName = "05. 🏷️ Labels & Values", Name = "Strike Text Color", Order = 60)]
         public Color StrikeTextColor
         {
             get => _strikeTextColor;
@@ -325,7 +424,8 @@ namespace ATAS.Indicators.Technical
 
         #region Major Levels
         private bool _showZeroGammaLine = true;
-        [Display(GroupName = "6. Major Levels", Name = "Show Zero Gamma line", Order = 10)]
+        /// <summary>Show Zero Gamma (ZG) horizontal line</summary>
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Show Zero Gamma Line", Description = "Key level where net gamma = 0", Order = 10)]
         public bool ShowZeroGammaLine
         {
             get => _showZeroGammaLine;
@@ -333,7 +433,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _zeroGammaColor = Color.Yellow;
-        [Display(GroupName = "6. Major Levels", Name = "Zero Gamma color", Order = 20)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Zero Gamma Color", Order = 20)]
         public Color ZeroGammaColor
         {
             get => _zeroGammaColor;
@@ -341,7 +441,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _zeroGammaThickness = 2;
-        [Display(GroupName = "6. Major Levels", Name = "Zero Gamma thickness", Order = 30)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Zero Gamma Thickness", Order = 30)]
         [Range(1, 10)]
         public int ZeroGammaThickness
         {
@@ -350,7 +450,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private DashStyle _zeroGammaDash = DashStyle.Dash;
-        [Display(GroupName = "6. Major Levels", Name = "Zero Gamma dash style", Order = 40)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Zero Gamma Dash Style", Order = 40)]
         public DashStyle ZeroGammaDash
         {
             get => _zeroGammaDash;
@@ -358,7 +458,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMajorPosLine = true;
-        [Display(GroupName = "6. Major Levels", Name = "Show Major Positive line", Order = 50)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Show Major Positive Line", Description = "Highest positive GEX strike", Order = 50)]
         public bool ShowMajorPosLine
         {
             get => _showMajorPosLine;
@@ -366,7 +466,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _majorPosColor = Color.LimeGreen;
-        [Display(GroupName = "6. Major Levels", Name = "Major Positive color", Order = 60)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Major Positive Color", Order = 60)]
         public Color MajorPosColor
         {
             get => _majorPosColor;
@@ -374,7 +474,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMajorNegLine = true;
-        [Display(GroupName = "6. Major Levels", Name = "Show Major Negative line", Order = 70)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Show Major Negative Line", Description = "Lowest negative GEX strike", Order = 70)]
         public bool ShowMajorNegLine
         {
             get => _showMajorNegLine;
@@ -382,7 +482,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _majorNegColor = Color.OrangeRed;
-        [Display(GroupName = "6. Major Levels", Name = "Major Negative color", Order = 80)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Major Negative Color", Order = 80)]
         public Color MajorNegColor
         {
             get => _majorNegColor;
@@ -390,7 +490,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _majorLinesThickness = 2;
-        [Display(GroupName = "6. Major Levels", Name = "Major lines thickness", Order = 90)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Major Lines Thickness", Order = 90)]
         [Range(1, 10)]
         public int MajorLinesThickness
         {
@@ -399,7 +499,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private DashStyle _majorLinesDash = DashStyle.Solid;
-        [Display(GroupName = "6. Major Levels", Name = "Major lines dash style", Order = 100)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Major Lines Dash Style", Order = 100)]
         public DashStyle MajorLinesDash
         {
             get => _majorLinesDash;
@@ -407,7 +507,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMajorLabels = true;
-        [Display(GroupName = "6. Major Levels", Name = "Show level labels", Order = 110)]
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Show Level Labels", Order = 110)]
         public bool ShowMajorLabels
         {
             get => _showMajorLabels;
@@ -417,7 +517,8 @@ namespace ATAS.Indicators.Technical
 
         #region Info Panel
         private bool _showInfoPanel = true;
-        [Display(GroupName = "7. Info Panel", Name = "Show info panel", Order = 10)]
+        /// <summary>Show main information panel with GEX summary</summary>
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Show Info Panel", Description = "Display GEX data summary panel", Order = 10)]
         public bool ShowInfoPanel
         {
             get => _showInfoPanel;
@@ -426,7 +527,7 @@ namespace ATAS.Indicators.Technical
 
         public enum InfoPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
         private InfoPanelAlign _infoPanelPosition = InfoPanelAlign.TopRight;
-        [Display(GroupName = "7. Info Panel", Name = "Panel position", Order = 15)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Panel Position", Order = 15)]
         public InfoPanelAlign InfoPanelPosition
         {
             get => _infoPanelPosition;
@@ -434,7 +535,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _infoPanelX = 10;
-        [Display(GroupName = "7. Info Panel", Name = "Panel X offset", Order = 20)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "X Offset (px)", Order = 20)]
         [Range(0, 5000)]
         public int InfoPanelX
         {
@@ -443,7 +544,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _infoPanelY = 10;
-        [Display(GroupName = "7. Info Panel", Name = "Panel Y offset", Order = 30)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Y Offset (px)", Order = 30)]
         [Range(0, 5000)]
         public int InfoPanelY
         {
@@ -452,7 +553,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _infoPanelFontSize = 11;
-        [Display(GroupName = "7. Info Panel", Name = "Font size", Order = 40)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Font Size", Order = 40)]
         [Range(8, 24)]
         public int InfoPanelFontSize
         {
@@ -461,7 +562,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _infoPanelTextColor = Color.White;
-        [Display(GroupName = "7. Info Panel", Name = "Text color", Order = 50)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Text Color", Order = 50)]
         public Color InfoPanelTextColor
         {
             get => _infoPanelTextColor;
@@ -469,7 +570,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _infoPanelBackColor = Color.FromArgb(220, 20, 20, 25);
-        [Display(GroupName = "7. Info Panel", Name = "Background color", Order = 60)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Background Color", Order = 60)]
         public Color InfoPanelBackColor
         {
             get => _infoPanelBackColor;
@@ -477,7 +578,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _infoPanelBorderColor = Color.FromArgb(180, 60, 60, 70);
-        [Display(GroupName = "7. Info Panel", Name = "Border color", Order = 65)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Border Color", Order = 65)]
         public Color InfoPanelBorderColor
         {
             get => _infoPanelBorderColor;
@@ -485,7 +586,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _infoPanelHeaderColor = Color.FromArgb(255, 0, 180, 220);
-        [Display(GroupName = "7. Info Panel", Name = "Header color", Order = 70)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Header Color", Order = 70)]
         public Color InfoPanelHeaderColor
         {
             get => _infoPanelHeaderColor;
@@ -493,7 +594,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _infoPanelAccentPositive = Color.FromArgb(255, 0, 200, 100);
-        [Display(GroupName = "7. Info Panel", Name = "Positive accent color", Order = 75)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Positive Accent Color", Order = 75)]
         public Color InfoPanelAccentPositive
         {
             get => _infoPanelAccentPositive;
@@ -501,7 +602,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _infoPanelAccentNegative = Color.FromArgb(255, 220, 80, 80);
-        [Display(GroupName = "7. Info Panel", Name = "Negative accent color", Order = 80)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Negative Accent Color", Order = 80)]
         public Color InfoPanelAccentNegative
         {
             get => _infoPanelAccentNegative;
@@ -509,7 +610,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _infoPanelBarWidth = 120;
-        [Display(GroupName = "7. Info Panel", Name = "Bar width (px)", Order = 85)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Bar Width (px)", Order = 85)]
         [Range(50, 300)]
         public int InfoPanelBarWidth
         {
@@ -518,7 +619,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showInfoPanelBars = true;
-        [Display(GroupName = "7. Info Panel", Name = "Show visual bars", Order = 90)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Show Visual Bars", Order = 90)]
         public bool ShowInfoPanelBars
         {
             get => _showInfoPanelBars;
@@ -526,7 +627,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _compactMode = false;
-        [Display(GroupName = "7. Info Panel", Name = "Compact mode", Order = 95)]
+        [Display(GroupName = "07. 📋 Info Panel", Name = "Compact Mode", Description = "Smaller panel with essential info only", Order = 95)]
         public bool CompactMode
         {
             get => _compactMode;
@@ -536,7 +637,8 @@ namespace ATAS.Indicators.Technical
 
         #region Strike Grid
         private bool _showStrikeGrid = false;
-        [Display(GroupName = "8. Strike Grid", Name = "Show strike grid", Order = 10)]
+        /// <summary>Show horizontal grid lines at strike prices</summary>
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Show Strike Grid", Description = "Display horizontal lines at strike intervals", Order = 10)]
         public bool ShowStrikeGrid
         {
             get => _showStrikeGrid;
@@ -544,7 +646,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _strikeGridStep = 1m;
-        [Display(GroupName = "8. Strike Grid", Name = "Strike step (underlying)", Order = 20)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Strike Step", Description = "Interval between grid lines in underlying points", Order = 20)]
         public decimal StrikeGridStep
         {
             get => _strikeGridStep;
@@ -552,7 +654,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _strikeGridStart = 0m;
-        [Display(GroupName = "8. Strike Grid", Name = "Start strike (0=auto)", Order = 25)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Start Strike (0=auto)", Order = 25)]
         public decimal StrikeGridStart
         {
             get => _strikeGridStart;
@@ -560,7 +662,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _strikeGridEnd = 0m;
-        [Display(GroupName = "8. Strike Grid", Name = "End strike (0=auto)", Order = 26)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "End Strike (0=auto)", Order = 26)]
         public decimal StrikeGridEnd
         {
             get => _strikeGridEnd;
@@ -568,7 +670,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _strikeGridColor = Color.FromArgb(40, 150, 150, 150);
-        [Display(GroupName = "8. Strike Grid", Name = "Grid color", Order = 30)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Grid Color", Order = 30)]
         public Color StrikeGridColor
         {
             get => _strikeGridColor;
@@ -576,7 +678,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeGridThickness = 1;
-        [Display(GroupName = "8. Strike Grid", Name = "Grid thickness", Order = 40)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Grid Thickness", Order = 40)]
         [Range(1, 5)]
         public int StrikeGridThickness
         {
@@ -585,7 +687,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private DashStyle _strikeGridDash = DashStyle.Dot;
-        [Display(GroupName = "8. Strike Grid", Name = "Grid dash style", Order = 50)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Grid Dash Style", Order = 50)]
         public DashStyle StrikeGridDash
         {
             get => _strikeGridDash;
@@ -593,7 +695,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showStrikeGridLabels = true;
-        [Display(GroupName = "8. Strike Grid", Name = "Show strike labels", Order = 60)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Show Strike Labels", Order = 60)]
         public bool ShowStrikeGridLabels
         {
             get => _showStrikeGridLabels;
@@ -601,7 +703,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _strikeGridLabelColor = Color.FromArgb(180, 180, 180, 180);
-        [Display(GroupName = "8. Strike Grid", Name = "Label color", Order = 70)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Label Color", Order = 70)]
         public Color StrikeGridLabelColor
         {
             get => _strikeGridLabelColor;
@@ -609,7 +711,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeGridLabelFontSize = 8;
-        [Display(GroupName = "8. Strike Grid", Name = "Label font size", Order = 80)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Label Font Size", Order = 80)]
         [Range(6, 16)]
         public int StrikeGridLabelFontSize
         {
@@ -619,7 +721,7 @@ namespace ATAS.Indicators.Technical
 
         public enum GridLabelPosition { Left, Right }
         private GridLabelPosition _strikeGridLabelPos = GridLabelPosition.Right;
-        [Display(GroupName = "8. Strike Grid", Name = "Label position", Order = 90)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Label Position", Order = 90)]
         public GridLabelPosition StrikeGridLabelPosition
         {
             get => _strikeGridLabelPos;
@@ -627,7 +729,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _strikeGridMajorColor = Color.FromArgb(80, 200, 200, 200);
-        [Display(GroupName = "8. Strike Grid", Name = "Major strike color", Order = 100)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Major Strike Color", Order = 100)]
         public Color StrikeGridMajorColor
         {
             get => _strikeGridMajorColor;
@@ -635,7 +737,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeGridMajorEvery = 5;
-        [Display(GroupName = "8. Strike Grid", Name = "Major line every N strikes", Order = 110)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Major Line Every N", Order = 110)]
         [Range(0, 50)]
         public int StrikeGridMajorEvery
         {
@@ -644,7 +746,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeGridMajorThickness = 2;
-        [Display(GroupName = "8. Strike Grid", Name = "Major line thickness", Order = 120)]
+        [Display(GroupName = "08. 📐 Strike Grid", Name = "Major Line Thickness", Order = 120)]
         [Range(1, 8)]
         public int StrikeGridMajorThickness
         {
@@ -655,7 +757,8 @@ namespace ATAS.Indicators.Technical
 
         #region Alerts
         private bool _enableAlerts = true;
-        [Display(GroupName = "9. Alerts", Name = "Enable alerts", Order = 10)]
+        /// <summary>Enable GEX change alerts</summary>
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Enable Alerts", Description = "Detect significant GEX changes", Order = 10)]
         public bool EnableAlerts
         {
             get => _enableAlerts;
@@ -664,7 +767,7 @@ namespace ATAS.Indicators.Technical
 
         public enum AlertThresholdType { Percentage, AbsoluteValue, TopN }
         private AlertThresholdType _alertThresholdType = AlertThresholdType.Percentage;
-        [Display(GroupName = "9. Alerts", Name = "Threshold type", Order = 20)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Threshold Type", Description = "Method to determine alert trigger", Order = 20)]
         public AlertThresholdType AlertThreshold
         {
             get => _alertThresholdType;
@@ -672,7 +775,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _alertThresholdValue = 50m;
-        [Display(GroupName = "9. Alerts", Name = "Threshold value (%/Value/TopN)", Order = 30)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Threshold Value", Description = "Value for selected threshold type", Order = 30)]
         [Range(0, 10000)]
         public decimal AlertThresholdValue
         {
@@ -682,7 +785,7 @@ namespace ATAS.Indicators.Technical
 
         public enum AlertTimePeriod { OneMin, FiveMin, TenMin, FifteenMin, ThirtyMin }
         private AlertTimePeriod _alertTimePeriod = AlertTimePeriod.FiveMin;
-        [Display(GroupName = "9. Alerts", Name = "Time period", Order = 40)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Comparison Period", Description = "Time period to compare against", Order = 40)]
         public AlertTimePeriod AlertPeriod
         {
             get => _alertTimePeriod;
@@ -690,7 +793,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _alertOnIncrease = true;
-        [Display(GroupName = "9. Alerts", Name = "Alert on GEX increase", Order = 50)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Alert on Increase", Order = 50)]
         public bool AlertOnIncrease
         {
             get => _alertOnIncrease;
@@ -698,7 +801,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _alertOnDecrease = true;
-        [Display(GroupName = "9. Alerts", Name = "Alert on GEX decrease", Order = 60)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Alert on Decrease", Order = 60)]
         public bool AlertOnDecrease
         {
             get => _alertOnDecrease;
@@ -706,7 +809,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _alertIncreaseColor = Color.FromArgb(255, 0, 255, 150);
-        [Display(GroupName = "9. Alerts", Name = "Increase alert color", Order = 70)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Increase Alert Color", Order = 70)]
         public Color AlertIncreaseColor
         {
             get => _alertIncreaseColor;
@@ -714,7 +817,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _alertDecreaseColor = Color.FromArgb(255, 255, 100, 0);
-        [Display(GroupName = "9. Alerts", Name = "Decrease alert color", Order = 80)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Decrease Alert Color", Order = 80)]
         public Color AlertDecreaseColor
         {
             get => _alertDecreaseColor;
@@ -722,7 +825,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _alertOutlineThickness = 3;
-        [Display(GroupName = "9. Alerts", Name = "Alert outline thickness", Order = 90)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Alert Outline Thickness", Order = 90)]
         [Range(1, 10)]
         public int AlertOutlineThickness
         {
@@ -731,7 +834,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _alertShowInPanel = true;
-        [Display(GroupName = "9. Alerts", Name = "Show alerts in panel", Order = 100)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Show in Info Panel", Order = 100)]
         public bool AlertShowInPanel
         {
             get => _alertShowInPanel;
@@ -739,7 +842,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _alertPulseEffect = true;
-        [Display(GroupName = "9. Alerts", Name = "Pulse effect (animation)", Order = 110)]
+        [Display(GroupName = "09. 🔔 Alerts", Name = "Pulse Animation", Description = "Animated pulsing effect on alert bars", Order = 110)]
         public bool AlertPulseEffect
         {
             get => _alertPulseEffect;
@@ -749,7 +852,8 @@ namespace ATAS.Indicators.Technical
 
         #region Direction Arrows
         private bool _showDirectionArrows = true;
-        [Display(GroupName = "10. Direction Arrows", Name = "Show direction arrows", Order = 10)]
+        /// <summary>Show trend direction arrows on bars</summary>
+        [Display(GroupName = "10. ➡️ Direction Arrows", Name = "Show Direction Arrows", Description = "Display trend arrows based on GEX changes", Order = 10)]
         public bool ShowDirectionArrows
         {
             get => _showDirectionArrows;
@@ -758,7 +862,7 @@ namespace ATAS.Indicators.Technical
 
         public enum ArrowTimePeriod { OneMin, FiveMin, TenMin, FifteenMin, ThirtyMin }
         private ArrowTimePeriod _arrowTimePeriod = ArrowTimePeriod.FiveMin;
-        [Display(GroupName = "10. Direction Arrows", Name = "Comparison period", Order = 20)]
+        [Display(GroupName = "10. ➡️ Direction Arrows", Name = "Comparison Period", Order = 20)]
         public ArrowTimePeriod ArrowPeriod
         {
             get => _arrowTimePeriod;
@@ -766,7 +870,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _arrowFontSize = 10;
-        [Display(GroupName = "10. Direction Arrows", Name = "Arrow size", Order = 30)]
+        [Display(GroupName = "10. ➡️ Direction Arrows", Name = "Arrow Size", Order = 30)]
         [Range(6, 24)]
         public int ArrowFontSize
         {
@@ -775,7 +879,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _arrowUpColor = Color.FromArgb(255, 0, 255, 120);
-        [Display(GroupName = "10. Direction Arrows", Name = "Up arrow color", Order = 40)]
+        [Display(GroupName = "10. ➡️ Direction Arrows", Name = "Up Arrow Color", Order = 40)]
         public Color ArrowUpColor
         {
             get => _arrowUpColor;
@@ -783,7 +887,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _arrowDownColor = Color.FromArgb(255, 255, 80, 80);
-        [Display(GroupName = "10. Direction Arrows", Name = "Down arrow color", Order = 50)]
+        [Display(GroupName = "10. ➡️ Direction Arrows", Name = "Down Arrow Color", Order = 50)]
         public Color ArrowDownColor
         {
             get => _arrowDownColor;
@@ -791,7 +895,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _arrowOffsetPx = 2;
-        [Display(GroupName = "10. Direction Arrows", Name = "Arrow offset (px)", Order = 60)]
+        [Display(GroupName = "10. ➡️ Direction Arrows", Name = "Arrow Offset (px)", Order = 60)]
         [Range(0, 50)]
         public int ArrowOffsetPx
         {
@@ -800,7 +904,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _arrowMinChange = 0m;
-        [Display(GroupName = "10. Direction Arrows", Name = "Min change to show arrow", Order = 70)]
+        [Display(GroupName = "10. ➡️ Direction Arrows", Name = "Min Change to Show", Description = "Minimum GEX change to display arrow", Order = 70)]
         public decimal ArrowMinChange
         {
             get => _arrowMinChange;
@@ -810,7 +914,8 @@ namespace ATAS.Indicators.Technical
 
         #region Gamma Zones
         private bool _showGammaZones = false;
-        [Display(GroupName = "11. Gamma Zones", Name = "Show gamma zones", Order = 10)]
+        /// <summary>Color chart background by gamma zone</summary>
+        [Display(GroupName = "11. 🌈 Gamma Zones", Name = "Show Gamma Zones", Description = "Color background above/below Zero Gamma", Order = 10)]
         public bool ShowGammaZones
         {
             get => _showGammaZones;
@@ -818,7 +923,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _positiveZoneColor = Color.FromArgb(15, 0, 200, 100);
-        [Display(GroupName = "11. Gamma Zones", Name = "Positive zone color", Order = 20)]
+        [Display(GroupName = "11. 🌈 Gamma Zones", Name = "Positive Zone Color", Description = "Background for positive gamma area", Order = 20)]
         public Color PositiveZoneColor
         {
             get => _positiveZoneColor;
@@ -826,7 +931,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _negativeZoneColor = Color.FromArgb(15, 200, 60, 60);
-        [Display(GroupName = "11. Gamma Zones", Name = "Negative zone color", Order = 30)]
+        [Display(GroupName = "11. 🌈 Gamma Zones", Name = "Negative Zone Color", Description = "Background for negative gamma area", Order = 30)]
         public Color NegativeZoneColor
         {
             get => _negativeZoneColor;
@@ -834,7 +939,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showZoneBoundary = true;
-        [Display(GroupName = "11. Gamma Zones", Name = "Show zone boundary", Order = 40)]
+        [Display(GroupName = "11. 🌈 Gamma Zones", Name = "Show Zone Boundary", Order = 40)]
         public bool ShowZoneBoundary
         {
             get => _showZoneBoundary;
@@ -842,7 +947,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _zoneBoundaryColor = Color.FromArgb(100, 255, 255, 0);
-        [Display(GroupName = "11. Gamma Zones", Name = "Zone boundary color", Order = 50)]
+        [Display(GroupName = "11. 🌈 Gamma Zones", Name = "Zone Boundary Color", Order = 50)]
         public Color ZoneBoundaryColor
         {
             get => _zoneBoundaryColor;
@@ -850,7 +955,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showZoneLabels = true;
-        [Display(GroupName = "11. Gamma Zones", Name = "Show zone labels", Order = 60)]
+        [Display(GroupName = "11. 🌈 Gamma Zones", Name = "Show Zone Labels", Order = 60)]
         public bool ShowZoneLabels
         {
             get => _showZoneLabels;
@@ -859,7 +964,7 @@ namespace ATAS.Indicators.Technical
 
         public enum ZoneLabelAlign { Left, Right, Center }
         private ZoneLabelAlign _zoneLabelPos = ZoneLabelAlign.Right;
-        [Display(GroupName = "11. Gamma Zones", Name = "Zone label position", Order = 70)]
+        [Display(GroupName = "11. 🌈 Gamma Zones", Name = "Zone Label Position", Order = 70)]
         public ZoneLabelAlign ZoneLabelPosition
         {
             get => _zoneLabelPos;
@@ -869,7 +974,8 @@ namespace ATAS.Indicators.Technical
 
         #region Sparklines
         private bool _showSparklines = false;
-        [Display(GroupName = "12. Sparklines", Name = "Show sparklines", Order = 10)]
+        /// <summary>Show mini trend charts for each strike</summary>
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Show Sparklines", Description = "Mini trend charts showing GEX history", Order = 10)]
         public bool ShowSparklines
         {
             get => _showSparklines;
@@ -877,7 +983,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _sparklineWidth = 40;
-        [Display(GroupName = "12. Sparklines", Name = "Width (px)", Order = 20)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Width (px)", Order = 20)]
         [Range(20, 100)]
         public int SparklineWidth
         {
@@ -886,7 +992,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _sparklineHeight = 12;
-        [Display(GroupName = "12. Sparklines", Name = "Height (px)", Order = 30)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Height (px)", Order = 30)]
         [Range(6, 30)]
         public int SparklineHeight
         {
@@ -895,7 +1001,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _sparklineOffsetPx = 5;
-        [Display(GroupName = "12. Sparklines", Name = "Offset from bar (px)", Order = 40)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Offset from Bar (px)", Order = 40)]
         [Range(0, 50)]
         public int SparklineOffsetPx
         {
@@ -904,7 +1010,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _sparklineUpColor = Color.FromArgb(255, 0, 200, 120);
-        [Display(GroupName = "12. Sparklines", Name = "Uptrend color", Order = 50)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Uptrend Color", Order = 50)]
         public Color SparklineUpColor
         {
             get => _sparklineUpColor;
@@ -912,7 +1018,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _sparklineDownColor = Color.FromArgb(255, 255, 80, 80);
-        [Display(GroupName = "12. Sparklines", Name = "Downtrend color", Order = 60)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Downtrend Color", Order = 60)]
         public Color SparklineDownColor
         {
             get => _sparklineDownColor;
@@ -920,7 +1026,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _sparklineNeutralColor = Color.FromArgb(255, 150, 150, 150);
-        [Display(GroupName = "12. Sparklines", Name = "Neutral color", Order = 70)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Neutral Color", Order = 70)]
         public Color SparklineNeutralColor
         {
             get => _sparklineNeutralColor;
@@ -928,7 +1034,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _sparklineThickness = 1;
-        [Display(GroupName = "12. Sparklines", Name = "Line thickness", Order = 80)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Line Thickness", Order = 80)]
         [Range(1, 4)]
         public int SparklineThickness
         {
@@ -937,7 +1043,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _sparklineShowBackground = true;
-        [Display(GroupName = "12. Sparklines", Name = "Show background", Order = 90)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Show Background", Order = 90)]
         public bool SparklineShowBackground
         {
             get => _sparklineShowBackground;
@@ -945,7 +1051,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _sparklineBackColor = Color.FromArgb(120, 30, 30, 35);
-        [Display(GroupName = "12. Sparklines", Name = "Background color", Order = 100)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Background Color", Order = 100)]
         public Color SparklineBackColor
         {
             get => _sparklineBackColor;
@@ -953,7 +1059,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _sparklineShowDots = true;
-        [Display(GroupName = "12. Sparklines", Name = "Show data points", Order = 110)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Show Data Points", Order = 110)]
         public bool SparklineShowDots
         {
             get => _sparklineShowDots;
@@ -961,7 +1067,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _sparklineShowZeroLine = true;
-        [Display(GroupName = "12. Sparklines", Name = "Show zero line", Order = 120)]
+        [Display(GroupName = "12. 📈 Sparklines", Name = "Show Zero Line", Order = 120)]
         public bool SparklineShowZeroLine
         {
             get => _sparklineShowZeroLine;
@@ -971,7 +1077,8 @@ namespace ATAS.Indicators.Technical
 
         #region Alert History
         private bool _enableAlertHistory = true;
-        [Display(GroupName = "13. Alert History", Name = "Enable alert history", Order = 10)]
+        /// <summary>Keep history of triggered alerts</summary>
+        [Display(GroupName = "13. 📜 Alert History", Name = "Enable Alert History", Description = "Store and display past alerts", Order = 10)]
         public bool EnableAlertHistory
         {
             get => _enableAlertHistory;
@@ -979,7 +1086,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _alertHistoryMaxItems = 20;
-        [Display(GroupName = "13. Alert History", Name = "Max history items", Order = 20)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Max History Items", Order = 20)]
         [Range(5, 100)]
         public int AlertHistoryMaxItems
         {
@@ -988,7 +1095,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showAlertHistoryPanel = true;
-        [Display(GroupName = "13. Alert History", Name = "Show history panel", Order = 30)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Show History Panel", Order = 30)]
         public bool ShowAlertHistoryPanel
         {
             get => _showAlertHistoryPanel;
@@ -996,7 +1103,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _alertHistoryDisplayCount = 8;
-        [Display(GroupName = "13. Alert History", Name = "Display count in panel", Order = 40)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Display Count in Panel", Order = 40)]
         [Range(3, 20)]
         public int AlertHistoryDisplayCount
         {
@@ -1006,7 +1113,7 @@ namespace ATAS.Indicators.Technical
 
         public enum HistoryPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
         private HistoryPanelAlign _alertHistoryPosition = HistoryPanelAlign.BottomRight;
-        [Display(GroupName = "13. Alert History", Name = "Panel position", Order = 50)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Panel Position", Order = 50)]
         public HistoryPanelAlign AlertHistoryPosition
         {
             get => _alertHistoryPosition;
@@ -1014,7 +1121,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _alertHistoryPanelX = 10;
-        [Display(GroupName = "13. Alert History", Name = "Panel X offset", Order = 60)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "X Offset (px)", Order = 60)]
         [Range(0, 5000)]
         public int AlertHistoryPanelX
         {
@@ -1023,7 +1130,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _alertHistoryPanelY = 10;
-        [Display(GroupName = "13. Alert History", Name = "Panel Y offset", Order = 70)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Y Offset (px)", Order = 70)]
         [Range(0, 5000)]
         public int AlertHistoryPanelY
         {
@@ -1032,7 +1139,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _alertHistoryBackColor = Color.FromArgb(220, 25, 20, 30);
-        [Display(GroupName = "13. Alert History", Name = "Background color", Order = 80)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Background Color", Order = 80)]
         public Color AlertHistoryBackColor
         {
             get => _alertHistoryBackColor;
@@ -1040,7 +1147,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _alertHistoryBorderColor = Color.FromArgb(180, 80, 60, 70);
-        [Display(GroupName = "13. Alert History", Name = "Border color", Order = 85)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Border Color", Order = 85)]
         public Color AlertHistoryBorderColor
         {
             get => _alertHistoryBorderColor;
@@ -1048,7 +1155,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _alertHistoryFontSize = 9;
-        [Display(GroupName = "13. Alert History", Name = "Font size", Order = 90)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Font Size", Order = 90)]
         [Range(7, 14)]
         public int AlertHistoryFontSize
         {
@@ -1057,7 +1164,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _alertHistoryDuplicateWindowSec = 60;
-        [Display(GroupName = "13. Alert History", Name = "Duplicate filter (sec)", Order = 100)]
+        [Display(GroupName = "13. 📜 Alert History", Name = "Duplicate Filter (sec)", Description = "Time window to filter duplicate alerts", Order = 100)]
         [Range(0, 300)]
         public int AlertHistoryDuplicateWindowSec
         {
@@ -1099,7 +1206,8 @@ namespace ATAS.Indicators.Technical
         private SoundPlayer? _soundPlayer;
 
         private bool _enableSoundAlerts = false;
-        [Display(GroupName = "14. Sound Alerts", Name = "Enable sound alerts", Order = 10)]
+        /// <summary>Enable audio notifications for alerts</summary>
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Enable Sound Alerts", Description = "Play sound when alerts trigger", Order = 10)]
         public bool EnableSoundAlerts
         {
             get => _enableSoundAlerts;
@@ -1108,7 +1216,7 @@ namespace ATAS.Indicators.Technical
 
         public enum SoundAlertType { SystemBeep, CustomWav }
         private SoundAlertType _soundType = SoundAlertType.SystemBeep;
-        [Display(GroupName = "14. Sound Alerts", Name = "Sound type", Order = 20)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Sound Type", Description = "System beep or custom WAV file", Order = 20)]
         public SoundAlertType SoundType
         {
             get => _soundType;
@@ -1116,7 +1224,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _soundOnIncrease = true;
-        [Display(GroupName = "14. Sound Alerts", Name = "Sound on GEX increase", Order = 30)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Sound on Increase", Order = 30)]
         public bool SoundOnIncrease
         {
             get => _soundOnIncrease;
@@ -1124,7 +1232,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _soundOnDecrease = true;
-        [Display(GroupName = "14. Sound Alerts", Name = "Sound on GEX decrease", Order = 40)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Sound on Decrease", Order = 40)]
         public bool SoundOnDecrease
         {
             get => _soundOnDecrease;
@@ -1132,7 +1240,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _beepFrequencyIncrease = 1200;
-        [Display(GroupName = "14. Sound Alerts", Name = "Beep frequency - increase (Hz)", Order = 50)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Beep Frequency - Increase (Hz)", Order = 50)]
         [Range(200, 5000)]
         public int BeepFrequencyIncrease
         {
@@ -1141,7 +1249,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _beepFrequencyDecrease = 600;
-        [Display(GroupName = "14. Sound Alerts", Name = "Beep frequency - decrease (Hz)", Order = 60)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Beep Frequency - Decrease (Hz)", Order = 60)]
         [Range(200, 5000)]
         public int BeepFrequencyDecrease
         {
@@ -1150,7 +1258,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _beepDuration = 150;
-        [Display(GroupName = "14. Sound Alerts", Name = "Beep duration (ms)", Order = 70)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Beep Duration (ms)", Order = 70)]
         [Range(50, 1000)]
         public int BeepDuration
         {
@@ -1159,7 +1267,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _customWavPath = string.Empty;
-        [Display(GroupName = "14. Sound Alerts", Name = "Custom WAV file path", Order = 80)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Custom WAV Path", Description = "Full path to custom WAV file", Order = 80)]
         public string CustomWavPath
         {
             get => _customWavPath;
@@ -1167,7 +1275,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _soundCooldownSec = 5;
-        [Display(GroupName = "14. Sound Alerts", Name = "Sound cooldown (sec)", Order = 90)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Sound Cooldown (sec)", Order = 90)]
         [Range(0, 300)]
         public int SoundCooldownSec
         {
@@ -1176,7 +1284,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _soundRepeatCount = 1;
-        [Display(GroupName = "14. Sound Alerts", Name = "Repeat count (beeps)", Order = 100)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Repeat Count", Order = 100)]
         [Range(1, 5)]
         public int SoundRepeatCount
         {
@@ -1185,7 +1293,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _soundOnlyFirstAlert = true;
-        [Display(GroupName = "14. Sound Alerts", Name = "Sound only for first alert", Order = 110)]
+        [Display(GroupName = "14. 🔊 Sound Alerts", Name = "Only First Alert", Description = "Sound only for first alert in batch", Order = 110)]
         public bool SoundOnlyFirstAlert
         {
             get => _soundOnlyFirstAlert;
@@ -1275,7 +1383,8 @@ namespace ATAS.Indicators.Technical
 
         #region Strike Range Filter
         private bool _enableStrikeFilter = false;
-        [Display(GroupName = "15. Strike Filter", Name = "Enable strike filter", Order = 10)]
+        /// <summary>Filter displayed strikes by range or count</summary>
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Enable Strike Filter", Description = "Limit displayed strikes", Order = 10)]
         public bool EnableStrikeFilter
         {
             get => _enableStrikeFilter;
@@ -1284,7 +1393,7 @@ namespace ATAS.Indicators.Technical
 
         public enum StrikeFilterMode { PercentFromSpot, FixedRange, StrikeCount }
         private StrikeFilterMode _strikeFilterMode = StrikeFilterMode.PercentFromSpot;
-        [Display(GroupName = "15. Strike Filter", Name = "Filter mode", Order = 20)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Filter Mode", Description = "Method to filter strikes", Order = 20)]
         public StrikeFilterMode FilterMode
         {
             get => _strikeFilterMode;
@@ -1292,7 +1401,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _strikeFilterPercent = 5m;
-        [Display(GroupName = "15. Strike Filter", Name = "Range (% from spot)", Order = 30)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Range (% from Spot)", Order = 30)]
         [Range(0.5, 50)]
         public decimal StrikeFilterPercent
         {
@@ -1301,7 +1410,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _strikeFilterMinPrice = 0m;
-        [Display(GroupName = "15. Strike Filter", Name = "Min strike price (0=auto)", Order = 40)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Min Strike Price (0=auto)", Order = 40)]
         public decimal StrikeFilterMinPrice
         {
             get => _strikeFilterMinPrice;
@@ -1309,7 +1418,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _strikeFilterMaxPrice = 0m;
-        [Display(GroupName = "15. Strike Filter", Name = "Max strike price (0=auto)", Order = 50)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Max Strike Price (0=auto)", Order = 50)]
         public decimal StrikeFilterMaxPrice
         {
             get => _strikeFilterMaxPrice;
@@ -1317,7 +1426,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _strikeFilterCount = 20;
-        [Display(GroupName = "15. Strike Filter", Name = "Max strikes to show", Order = 60)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Max Strikes to Show", Order = 60)]
         [Range(5, 100)]
         public int StrikeFilterCount
         {
@@ -1326,7 +1435,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _minGexThreshold = 0m;
-        [Display(GroupName = "15. Strike Filter", Name = "Min GEX value to show", Order = 70)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Min GEX Value", Description = "Hide strikes below this GEX value", Order = 70)]
         public decimal MinGexThreshold
         {
             get => _minGexThreshold;
@@ -1334,7 +1443,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showSpotPriceLine = true;
-        [Display(GroupName = "15. Strike Filter", Name = "Show spot price line", Order = 80)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Show Spot Price Line", Order = 80)]
         public bool ShowSpotPriceLine
         {
             get => _showSpotPriceLine;
@@ -1342,7 +1451,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _spotPriceLineColor = Color.FromArgb(200, 0, 180, 255);
-        [Display(GroupName = "15. Strike Filter", Name = "Spot line color", Order = 90)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Spot Line Color", Order = 90)]
         public Color SpotPriceLineColor
         {
             get => _spotPriceLineColor;
@@ -1350,7 +1459,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _spotPriceLineThickness = 2;
-        [Display(GroupName = "15. Strike Filter", Name = "Spot line thickness", Order = 100)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Spot Line Thickness", Order = 100)]
         [Range(1, 5)]
         public int SpotPriceLineThickness
         {
@@ -1359,7 +1468,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private DashStyle _spotPriceLineDash = DashStyle.Solid;
-        [Display(GroupName = "15. Strike Filter", Name = "Spot line dash style", Order = 110)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Spot Line Dash Style", Order = 110)]
         public DashStyle SpotPriceLineDash
         {
             get => _spotPriceLineDash;
@@ -1367,7 +1476,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showSpotPriceLabel = true;
-        [Display(GroupName = "15. Strike Filter", Name = "Show spot price label", Order = 120)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Show Spot Price Label", Order = 120)]
         public bool ShowSpotPriceLabel
         {
             get => _showSpotPriceLabel;
@@ -1375,7 +1484,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _highlightNearSpotStrikes = true;
-        [Display(GroupName = "15. Strike Filter", Name = "Highlight strikes near spot", Order = 130)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Highlight Near Spot", Description = "Highlight strikes close to spot price", Order = 130)]
         public bool HighlightNearSpotStrikes
         {
             get => _highlightNearSpotStrikes;
@@ -1383,7 +1492,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private decimal _nearSpotRange = 1m;
-        [Display(GroupName = "15. Strike Filter", Name = "Near spot range (%)", Order = 140)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Near Spot Range (%)", Order = 140)]
         [Range(0.1, 10)]
         public decimal NearSpotRange
         {
@@ -1392,7 +1501,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _nearSpotHighlightColor = Color.FromArgb(100, 0, 200, 255);
-        [Display(GroupName = "15. Strike Filter", Name = "Near spot highlight color", Order = 150)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Highlight Color", Order = 150)]
         public Color NearSpotHighlightColor
         {
             get => _nearSpotHighlightColor;
@@ -1400,7 +1509,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showFilteredCount = true;
-        [Display(GroupName = "15. Strike Filter", Name = "Show filtered count in panel", Order = 160)]
+        [Display(GroupName = "15. 🎯 Strike Filter", Name = "Show Filtered Count", Description = "Display strike count in info panel", Order = 160)]
         public bool ShowFilteredCount
         {
             get => _showFilteredCount;
@@ -1410,7 +1519,8 @@ namespace ATAS.Indicators.Technical
 
         #region Multi-Timeframe Panel
         private bool _showMultiTimeframePanel = false;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show MTF panel", Order = 10)]
+        /// <summary>Show comparison panel across multiple timeframes</summary>
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Show MTF Panel", Description = "Compare GEX across 1/5/10/15/30 min", Order = 10)]
         public bool ShowMultiTimeframePanel
         {
             get => _showMultiTimeframePanel;
@@ -1419,7 +1529,7 @@ namespace ATAS.Indicators.Technical
 
         public enum MtfPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
         private MtfPanelAlign _mtfPanelPosition = MtfPanelAlign.BottomLeft;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Panel position", Order = 20)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Panel Position", Order = 20)]
         public MtfPanelAlign MtfPanelPosition
         {
             get => _mtfPanelPosition;
@@ -1427,7 +1537,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _mtfPanelX = 10;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Panel X offset", Order = 30)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "X Offset (px)", Order = 30)]
         [Range(0, 5000)]
         public int MtfPanelX
         {
@@ -1436,7 +1546,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _mtfPanelY = 10;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Panel Y offset", Order = 40)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Y Offset (px)", Order = 40)]
         [Range(0, 5000)]
         public int MtfPanelY
         {
@@ -1445,7 +1555,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _mtfPanelFontSize = 10;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Font size", Order = 50)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Font Size", Order = 50)]
         [Range(8, 16)]
         public int MtfPanelFontSize
         {
@@ -1454,7 +1564,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _mtfPanelBackColor = Color.FromArgb(220, 20, 25, 30);
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Background color", Order = 60)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Background Color", Order = 60)]
         public Color MtfPanelBackColor
         {
             get => _mtfPanelBackColor;
@@ -1462,7 +1572,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _mtfPanelBorderColor = Color.FromArgb(180, 70, 70, 80);
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Border color", Order = 65)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Border Color", Order = 65)]
         public Color MtfPanelBorderColor
         {
             get => _mtfPanelBorderColor;
@@ -1470,7 +1580,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _mtfPanelHeaderColor = Color.FromArgb(255, 180, 100, 255);
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Header color", Order = 70)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Header Color", Order = 70)]
         public Color MtfPanelHeaderColor
         {
             get => _mtfPanelHeaderColor;
@@ -1478,7 +1588,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMtfNetGex = true;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show net GEX change", Order = 80)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Show Net GEX Change", Order = 80)]
         public bool ShowMtfNetGex
         {
             get => _showMtfNetGex;
@@ -1486,7 +1596,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMtfTopStrikes = true;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show top movers", Order = 90)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Show Top Movers", Order = 90)]
         public bool ShowMtfTopStrikes
         {
             get => _showMtfTopStrikes;
@@ -1494,7 +1604,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _mtfTopStrikesCount = 3;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Top movers count", Order = 100)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Top Movers Count", Order = 100)]
         [Range(1, 10)]
         public int MtfTopStrikesCount
         {
@@ -1503,7 +1613,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMtfTrendBars = true;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show trend bars", Order = 110)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Show Trend Bars", Order = 110)]
         public bool ShowMtfTrendBars
         {
             get => _showMtfTrendBars;
@@ -1511,7 +1621,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _mtfTrendBarWidth = 60;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Trend bar width", Order = 120)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Trend Bar Width", Order = 120)]
         [Range(30, 150)]
         public int MtfTrendBarWidth
         {
@@ -1520,7 +1630,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _mtfPositiveColor = Color.FromArgb(255, 0, 200, 100);
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Positive change color", Order = 130)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Positive Change Color", Order = 130)]
         public Color MtfPositiveColor
         {
             get => _mtfPositiveColor;
@@ -1528,7 +1638,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private Color _mtfNegativeColor = Color.FromArgb(255, 220, 80, 80);
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Negative change color", Order = 140)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Negative Change Color", Order = 140)]
         public Color MtfNegativeColor
         {
             get => _mtfNegativeColor;
@@ -1536,7 +1646,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMtfPercentChange = true;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show % change", Order = 150)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Show % Change", Order = 150)]
         public bool ShowMtfPercentChange
         {
             get => _showMtfPercentChange;
@@ -1544,7 +1654,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _mtfCompactMode = false;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Compact mode", Order = 160)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Compact Mode", Order = 160)]
         public bool MtfCompactMode
         {
             get => _mtfCompactMode;
@@ -1552,7 +1662,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showMtfHeatmap = true;
-        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show heatmap colors", Order = 170)]
+        [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Show Heatmap Colors", Description = "Color intensity by change magnitude", Order = 170)]
         public bool ShowMtfHeatmap
         {
             get => _showMtfHeatmap;
@@ -1562,7 +1672,8 @@ namespace ATAS.Indicators.Technical
 
         #region Data Export
         private bool _enableDataExport = false;
-        [Display(GroupName = "17. Data Export", Name = "Enable data export", Order = 10)]
+        /// <summary>Enable exporting GEX data to files</summary>
+        [Display(GroupName = "17. 💾 Data Export", Name = "Enable Data Export", Description = "Export GEX data to CSV/TXT files", Order = 10)]
         public bool EnableDataExport
         {
             get => _enableDataExport;
@@ -1570,7 +1681,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _exportDirectory = string.Empty;
-        [Display(GroupName = "17. Data Export", Name = "Export directory (empty=Desktop)", Order = 20)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Export Directory", Description = "Folder path (empty = Desktop)", Order = 20)]
         public string ExportDirectory
         {
             get => _exportDirectory;
@@ -1578,7 +1689,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private string _exportFilePrefix = "GexBot";
-        [Display(GroupName = "17. Data Export", Name = "File name prefix", Order = 30)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "File Name Prefix", Order = 30)]
         public string ExportFilePrefix
         {
             get => _exportFilePrefix;
@@ -1587,7 +1698,7 @@ namespace ATAS.Indicators.Technical
 
         public enum ExportFormat { CSV, TXT }
         private ExportFormat _exportFormat = ExportFormat.CSV;
-        [Display(GroupName = "17. Data Export", Name = "Export format", Order = 40)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Export Format", Order = 40)]
         public ExportFormat DataExportFormat
         {
             get => _exportFormat;
@@ -1595,7 +1706,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _exportOnRefresh = false;
-        [Display(GroupName = "17. Data Export", Name = "Auto-export on refresh", Order = 50)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Auto-Export on Refresh", Order = 50)]
         public bool ExportOnRefresh
         {
             get => _exportOnRefresh;
@@ -1603,7 +1714,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _exportIncludeTimestamp = true;
-        [Display(GroupName = "17. Data Export", Name = "Include timestamp in filename", Order = 60)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Include Timestamp", Description = "Add timestamp to filename", Order = 60)]
         public bool ExportIncludeTimestamp
         {
             get => _exportIncludeTimestamp;
@@ -1611,7 +1722,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _exportIncludePriors = true;
-        [Display(GroupName = "17. Data Export", Name = "Include priors data", Order = 70)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Include Priors Data", Order = 70)]
         public bool ExportIncludePriors
         {
             get => _exportIncludePriors;
@@ -1619,7 +1730,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _exportIncludeAlerts = true;
-        [Display(GroupName = "17. Data Export", Name = "Include active alerts", Order = 80)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Include Active Alerts", Order = 80)]
         public bool ExportIncludeAlerts
         {
             get => _exportIncludeAlerts;
@@ -1627,7 +1738,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _exportAppendMode = false;
-        [Display(GroupName = "17. Data Export", Name = "Append to existing file", Order = 90)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Append Mode", Description = "Append to existing file", Order = 90)]
         public bool ExportAppendMode
         {
             get => _exportAppendMode;
@@ -1635,7 +1746,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private int _exportMaxFileSizeMB = 50;
-        [Display(GroupName = "17. Data Export", Name = "Max file size (MB)", Order = 100)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Max File Size (MB)", Order = 100)]
         [Range(1, 500)]
         public int ExportMaxFileSizeMB
         {
@@ -1644,7 +1755,7 @@ namespace ATAS.Indicators.Technical
         }
 
         private bool _showExportStatus = true;
-        [Display(GroupName = "17. Data Export", Name = "Show export status on chart", Order = 110)]
+        [Display(GroupName = "17. 💾 Data Export", Name = "Show Export Status", Description = "Display export status on chart", Order = 110)]
         public bool ShowExportStatus
         {
             get => _showExportStatus;
@@ -1866,6 +1977,652 @@ namespace ATAS.Indicators.Technical
         }
         #endregion
 
+        #region GEX Cluster Detection (Section 18)
+        private bool _enableClusterDetection = false;
+        /// <summary>Detect clusters of high GEX concentration</summary>
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Enable Cluster Detection", Description = "Identify zones of concentrated GEX", Order = 10)]
+        public bool EnableClusterDetection
+        {
+            get => _enableClusterDetection;
+            set { _enableClusterDetection = value; RequestRecalc(); }
+        }
+
+        private int _clusterMinStrikes = 3;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Min Strikes for Cluster", Order = 20)]
+        [Range(2, 10)]
+        public int ClusterMinStrikes
+        {
+            get => _clusterMinStrikes;
+            set { _clusterMinStrikes = Math.Clamp(value, 2, 10); RequestRecalc(); }
+        }
+
+        private decimal _clusterGexThreshold = 0.5m;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Min GEX % of Max", Description = "Threshold as percentage of max GEX", Order = 30)]
+        [Range(0.1, 1.0)]
+        public decimal ClusterGexThreshold
+        {
+            get => _clusterGexThreshold;
+            set { _clusterGexThreshold = Math.Clamp(value, 0.1m, 1.0m); RequestRecalc(); }
+        }
+
+        private bool _showClusterZones = true;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Show Cluster Zones", Order = 40)]
+        public bool ShowClusterZones
+        {
+            get => _showClusterZones;
+            set { _showClusterZones = value; RequestRecalc(); }
+        }
+
+        private Color _clusterPositiveColor = Color.FromArgb(40, 0, 255, 120);
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Positive Cluster Color", Order = 50)]
+        public Color ClusterPositiveColor
+        {
+            get => _clusterPositiveColor;
+            set { _clusterPositiveColor = value; RequestRecalc(); }
+        }
+
+        private Color _clusterNegativeColor = Color.FromArgb(40, 255, 80, 80);
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Negative Cluster Color", Order = 60)]
+        public Color ClusterNegativeColor
+        {
+            get => _clusterNegativeColor;
+            set { _clusterNegativeColor = value; RequestRecalc(); }
+        }
+
+        private bool _showClusterBoundaries = true;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Show Cluster Boundaries", Order = 70)]
+        public bool ShowClusterBoundaries
+        {
+            get => _showClusterBoundaries;
+            set { _showClusterBoundaries = value; RequestRecalc(); }
+        }
+
+        private int _clusterBoundaryThickness = 2;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Boundary Thickness", Order = 80)]
+        [Range(1, 5)]
+        public int ClusterBoundaryThickness
+        {
+            get => _clusterBoundaryThickness;
+            set { _clusterBoundaryThickness = Math.Clamp(value, 1, 5); RequestRecalc(); }
+        }
+
+        private bool _showClusterLabels = true;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Show Cluster Labels", Order = 90)]
+        public bool ShowClusterLabels
+        {
+            get => _showClusterLabels;
+            set { _showClusterLabels = value; RequestRecalc(); }
+        }
+
+        private bool _showClusterStrength = true;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Show Strength Indicator", Order = 100)]
+        public bool ShowClusterStrength
+        {
+            get => _showClusterStrength;
+            set { _showClusterStrength = value; RequestRecalc(); }
+        }
+
+        private bool _clusterAsSupportResistance = true;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Mark as S/R Levels", Description = "Label clusters as Support/Resistance", Order = 110)]
+        public bool ClusterAsSupportResistance
+        {
+            get => _clusterAsSupportResistance;
+            set { _clusterAsSupportResistance = value; RequestRecalc(); }
+        }
+
+        private int _maxClustersToShow = 5;
+        [Display(GroupName = "18. 🧲 GEX Clusters", Name = "Max Clusters to Show", Order = 120)]
+        [Range(1, 20)]
+        public int MaxClustersToShow
+        {
+            get => _maxClustersToShow;
+            set { _maxClustersToShow = Math.Clamp(value, 1, 20); RequestRecalc(); }
+        }
+        #endregion
+
+        #region GEX Statistics Panel (Section 19)
+        private bool _showStatisticsPanel = false;
+        /// <summary>Show statistical analysis panel</summary>
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Show Statistics Panel", Description = "Display GEX statistical metrics", Order = 10)]
+        public bool ShowStatisticsPanel
+        {
+            get => _showStatisticsPanel;
+            set { _showStatisticsPanel = value; RequestRecalc(); }
+        }
+
+        public enum StatsPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
+        private StatsPanelAlign _statsPanelPosition = StatsPanelAlign.TopLeft;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Panel Position", Order = 20)]
+        public StatsPanelAlign StatsPanelPosition
+        {
+            get => _statsPanelPosition;
+            set { _statsPanelPosition = value; RequestRecalc(); }
+        }
+
+        private int _statsPanelX = 10;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "X Offset (px)", Order = 30)]
+        [Range(0, 5000)]
+        public int StatsPanelX
+        {
+            get => _statsPanelX;
+            set { _statsPanelX = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _statsPanelY = 200;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Y Offset (px)", Order = 40)]
+        [Range(0, 5000)]
+        public int StatsPanelY
+        {
+            get => _statsPanelY;
+            set { _statsPanelY = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _statsPanelFontSize = 9;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Font Size", Order = 50)]
+        [Range(7, 14)]
+        public int StatsPanelFontSize
+        {
+            get => _statsPanelFontSize;
+            set { _statsPanelFontSize = Math.Clamp(value, 7, 14); RequestRecalc(); }
+        }
+
+        private Color _statsPanelBackColor = Color.FromArgb(220, 25, 25, 35);
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Background Color", Order = 60)]
+        public Color StatsPanelBackColor
+        {
+            get => _statsPanelBackColor;
+            set { _statsPanelBackColor = value; RequestRecalc(); }
+        }
+
+        private Color _statsPanelBorderColor = Color.FromArgb(180, 80, 80, 100);
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Border Color", Order = 65)]
+        public Color StatsPanelBorderColor
+        {
+            get => _statsPanelBorderColor;
+            set { _statsPanelBorderColor = value; RequestRecalc(); }
+        }
+
+        private Color _statsPanelHeaderColor = Color.FromArgb(255, 100, 180, 255);
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Header Color", Order = 70)]
+        public Color StatsPanelHeaderColor
+        {
+            get => _statsPanelHeaderColor;
+            set { _statsPanelHeaderColor = value; RequestRecalc(); }
+        }
+
+        private bool _showStatsPercentiles = true;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Show Percentiles", Description = "Display P25, P50, P75 values", Order = 80)]
+        public bool ShowStatsPercentiles
+        {
+            get => _showStatsPercentiles;
+            set { _showStatsPercentiles = value; RequestRecalc(); }
+        }
+
+        private bool _showStatsRatio = true;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Show Pos/Neg Ratio", Order = 90)]
+        public bool ShowStatsRatio
+        {
+            get => _showStatsRatio;
+            set { _showStatsRatio = value; RequestRecalc(); }
+        }
+
+        private bool _showGexScore = true;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Show GEX Score", Description = "Sentiment score -100 to +100", Order = 100)]
+        public bool ShowGexScore
+        {
+            get => _showGexScore;
+            set { _showGexScore = value; RequestRecalc(); }
+        }
+
+        private bool _showScoreGauge = true;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Show Score Gauge", Order = 110)]
+        public bool ShowScoreGauge
+        {
+            get => _showScoreGauge;
+            set { _showScoreGauge = value; RequestRecalc(); }
+        }
+
+        private int _scoreGaugeWidth = 100;
+        [Display(GroupName = "19. 📊 Statistics Panel", Name = "Gauge Width (px)", Order = 120)]
+        [Range(50, 200)]
+        public int ScoreGaugeWidth
+        {
+            get => _scoreGaugeWidth;
+            set { _scoreGaugeWidth = Math.Clamp(value, 50, 200); RequestRecalc(); }
+        }
+        #endregion
+
+        #region Price Target Projections (Section 20)
+        private bool _showPriceTargets = false;
+        /// <summary>Show price targets based on GEX levels</summary>
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Show Price Targets", Description = "Project targets from major GEX levels", Order = 10)]
+        public bool ShowPriceTargets
+        {
+            get => _showPriceTargets;
+            set { _showPriceTargets = value; RequestRecalc(); }
+        }
+
+        private bool _showDistanceToZeroGamma = true;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Distance to Zero Gamma", Order = 20)]
+        public bool ShowDistanceToZeroGamma
+        {
+            get => _showDistanceToZeroGamma;
+            set { _showDistanceToZeroGamma = value; RequestRecalc(); }
+        }
+
+        private bool _showDistanceToMajorLevels = true;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Distance to Major Levels", Order = 30)]
+        public bool ShowDistanceToMajorLevels
+        {
+            get => _showDistanceToMajorLevels;
+            set { _showDistanceToMajorLevels = value; RequestRecalc(); }
+        }
+
+        private bool _showAttractionIndicator = true;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Show Attraction Indicator", Description = "Price attraction strength", Order = 40)]
+        public bool ShowAttractionIndicator
+        {
+            get => _showAttractionIndicator;
+            set { _showAttractionIndicator = value; RequestRecalc(); }
+        }
+
+        private bool _showTargetArrows = true;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Show Target Arrows", Order = 50)]
+        public bool ShowTargetArrows
+        {
+            get => _showTargetArrows;
+            set { _showTargetArrows = value; RequestRecalc(); }
+        }
+
+        private Color _targetArrowUpColor = Color.FromArgb(255, 0, 200, 100);
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Upward Target Color", Order = 60)]
+        public Color TargetArrowUpColor
+        {
+            get => _targetArrowUpColor;
+            set { _targetArrowUpColor = value; RequestRecalc(); }
+        }
+
+        private Color _targetArrowDownColor = Color.FromArgb(255, 200, 80, 80);
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Downward Target Color", Order = 70)]
+        public Color TargetArrowDownColor
+        {
+            get => _targetArrowDownColor;
+            set { _targetArrowDownColor = value; RequestRecalc(); }
+        }
+
+        private bool _showTargetPanel = true;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Show Targets Panel", Order = 80)]
+        public bool ShowTargetPanel
+        {
+            get => _showTargetPanel;
+            set { _showTargetPanel = value; RequestRecalc(); }
+        }
+
+        public enum TargetPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
+        private TargetPanelAlign _targetPanelPosition = TargetPanelAlign.BottomLeft;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Panel Position", Order = 90)]
+        public TargetPanelAlign TargetPanelPosition
+        {
+            get => _targetPanelPosition;
+            set { _targetPanelPosition = value; RequestRecalc(); }
+        }
+
+        private int _targetPanelX = 200;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "X Offset (px)", Order = 100)]
+        [Range(0, 5000)]
+        public int TargetPanelX
+        {
+            get => _targetPanelX;
+            set { _targetPanelX = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _targetPanelY = 10;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Y Offset (px)", Order = 110)]
+        [Range(0, 5000)]
+        public int TargetPanelY
+        {
+            get => _targetPanelY;
+            set { _targetPanelY = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private bool _showAttractionBars = true;
+        [Display(GroupName = "20. 🎯 Price Targets", Name = "Show Attraction Bars", Order = 120)]
+        public bool ShowAttractionBars
+        {
+            get => _showAttractionBars;
+            set { _showAttractionBars = value; RequestRecalc(); }
+        }
+        #endregion
+
+        #region Session Time Filter (Section 21)
+        private bool _enableSessionFilter = false;
+        /// <summary>Filter and highlight by market session</summary>
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Enable Session Filter", Description = "Market hours awareness and 0DTE tracking", Order = 10)]
+        public bool EnableSessionFilter
+        {
+            get => _enableSessionFilter;
+            set { _enableSessionFilter = value; RequestRecalc(); }
+        }
+
+        private TimeSpan _marketOpenTime = new TimeSpan(9, 30, 0);
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Market Open Time", Order = 20)]
+        public TimeSpan MarketOpenTime
+        {
+            get => _marketOpenTime;
+            set { _marketOpenTime = value; RequestRecalc(); }
+        }
+
+        private TimeSpan _marketCloseTime = new TimeSpan(16, 0, 0);
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Market Close Time", Order = 30)]
+        public TimeSpan MarketCloseTime
+        {
+            get => _marketCloseTime;
+            set { _marketCloseTime = value; RequestRecalc(); }
+        }
+
+        private bool _showSessionIndicator = true;
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Show Session Indicator", Order = 40)]
+        public bool ShowSessionIndicator
+        {
+            get => _showSessionIndicator;
+            set { _showSessionIndicator = value; RequestRecalc(); }
+        }
+
+        private bool _dimOutsideSession = true;
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Dim Outside Session", Order = 50)]
+        public bool DimOutsideSession
+        {
+            get => _dimOutsideSession;
+            set { _dimOutsideSession = value; RequestRecalc(); }
+        }
+
+        private int _dimOpacity = 100;
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Dim Opacity", Order = 60)]
+        [Range(0, 200)]
+        public int DimOpacity
+        {
+            get => _dimOpacity;
+            set { _dimOpacity = Math.Clamp(value, 0, 200); RequestRecalc(); }
+        }
+
+        private bool _highlight0DTE = true;
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Highlight 0DTE Data", Description = "Special badge for zero days to expiry", Order = 70)]
+        public bool Highlight0DTE
+        {
+            get => _highlight0DTE;
+            set { _highlight0DTE = value; RequestRecalc(); }
+        }
+
+        private Color _zeroDteBadgeColor = Color.FromArgb(255, 255, 200, 0);
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "0DTE Badge Color", Order = 80)]
+        public Color ZeroDteBadgeColor
+        {
+            get => _zeroDteBadgeColor;
+            set { _zeroDteBadgeColor = value; RequestRecalc(); }
+        }
+
+        private bool _showTimeToExpiry = true;
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Show Time to Expiry", Order = 90)]
+        public bool ShowTimeToExpiry
+        {
+            get => _showTimeToExpiry;
+            set { _showTimeToExpiry = value; RequestRecalc(); }
+        }
+
+        private bool _showSessionProgress = true;
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Show Session Progress", Order = 100)]
+        public bool ShowSessionProgress
+        {
+            get => _showSessionProgress;
+            set { _showSessionProgress = value; RequestRecalc(); }
+        }
+
+        private Color _sessionActiveColor = Color.FromArgb(255, 0, 200, 100);
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Active Session Color", Order = 110)]
+        public Color SessionActiveColor
+        {
+            get => _sessionActiveColor;
+            set { _sessionActiveColor = value; RequestRecalc(); }
+        }
+
+        private Color _sessionClosedColor = Color.FromArgb(255, 150, 150, 150);
+        [Display(GroupName = "21. ⏰ Session Filter", Name = "Closed Session Color", Order = 120)]
+        public Color SessionClosedColor
+        {
+            get => _sessionClosedColor;
+            set { _sessionClosedColor = value; RequestRecalc(); }
+        }
+        #endregion
+
+        #region Theme Presets (Section 22)
+        /// <summary>Visual theme preset</summary>
+        public enum ThemePreset { Custom, Dark, Light, HighContrast, Classic, Neon }
+        private ThemePreset _themePreset = ThemePreset.Custom;
+        [Display(GroupName = "22. 🎨 Theme Presets", Name = "Theme Preset", Description = "Quick apply color theme", Order = 10)]
+        public ThemePreset ActiveTheme
+        {
+            get => _themePreset;
+            set { _themePreset = value; ApplyTheme(value); RequestRecalc(); }
+        }
+
+        private bool _autoSaveTheme = false;
+        [Display(GroupName = "22. 🎨 Theme Presets", Name = "Auto-Save Custom Theme", Order = 20)]
+        public bool AutoSaveTheme
+        {
+            get => _autoSaveTheme;
+            set { _autoSaveTheme = value; RequestRecalc(); }
+        }
+
+        private void ApplyTheme(ThemePreset theme)
+        {
+            switch (theme)
+            {
+                case ThemePreset.Dark:
+                    _positiveGexColor = Color.FromArgb(200, 0, 180, 80);
+                    _negativeGexColor = Color.FromArgb(200, 180, 50, 50);
+                    _infoPanelBackColor = Color.FromArgb(230, 15, 15, 20);
+                    _infoPanelTextColor = Color.FromArgb(255, 200, 200, 200);
+                    _infoPanelBorderColor = Color.FromArgb(150, 50, 50, 60);
+                    _infoPanelHeaderColor = Color.FromArgb(255, 0, 150, 200);
+                    _zeroGammaColor = Color.FromArgb(255, 255, 200, 0);
+                    _majorPosColor = Color.FromArgb(255, 0, 200, 80);
+                    _majorNegColor = Color.FromArgb(255, 200, 60, 60);
+                    break;
+
+                case ThemePreset.Light:
+                    _positiveGexColor = Color.FromArgb(180, 0, 150, 70);
+                    _negativeGexColor = Color.FromArgb(180, 180, 40, 40);
+                    _infoPanelBackColor = Color.FromArgb(240, 240, 240, 245);
+                    _infoPanelTextColor = Color.FromArgb(255, 30, 30, 40);
+                    _infoPanelBorderColor = Color.FromArgb(180, 180, 180, 190);
+                    _infoPanelHeaderColor = Color.FromArgb(255, 0, 100, 180);
+                    _zeroGammaColor = Color.FromArgb(255, 200, 150, 0);
+                    _majorPosColor = Color.FromArgb(255, 0, 150, 60);
+                    _majorNegColor = Color.FromArgb(255, 180, 40, 40);
+                    break;
+
+                case ThemePreset.HighContrast:
+                    _positiveGexColor = Color.FromArgb(255, 0, 255, 0);
+                    _negativeGexColor = Color.FromArgb(255, 255, 0, 0);
+                    _infoPanelBackColor = Color.FromArgb(255, 0, 0, 0);
+                    _infoPanelTextColor = Color.FromArgb(255, 255, 255, 255);
+                    _infoPanelBorderColor = Color.FromArgb(255, 255, 255, 255);
+                    _infoPanelHeaderColor = Color.FromArgb(255, 0, 255, 255);
+                    _zeroGammaColor = Color.FromArgb(255, 255, 255, 0);
+                    _majorPosColor = Color.FromArgb(255, 0, 255, 0);
+                    _majorNegColor = Color.FromArgb(255, 255, 0, 0);
+                    break;
+
+                case ThemePreset.Classic:
+                    _positiveGexColor = Color.FromArgb(180, 34, 139, 34);
+                    _negativeGexColor = Color.FromArgb(180, 178, 34, 34);
+                    _infoPanelBackColor = Color.FromArgb(220, 25, 25, 30);
+                    _infoPanelTextColor = Color.White;
+                    _infoPanelBorderColor = Color.FromArgb(150, 80, 80, 90);
+                    _infoPanelHeaderColor = Color.FromArgb(255, 70, 130, 180);
+                    _zeroGammaColor = Color.Gold;
+                    _majorPosColor = Color.LimeGreen;
+                    _majorNegColor = Color.OrangeRed;
+                    break;
+
+                case ThemePreset.Neon:
+                    _positiveGexColor = Color.FromArgb(200, 0, 255, 150);
+                    _negativeGexColor = Color.FromArgb(200, 255, 0, 100);
+                    _infoPanelBackColor = Color.FromArgb(230, 10, 5, 20);
+                    _infoPanelTextColor = Color.FromArgb(255, 0, 255, 255);
+                    _infoPanelBorderColor = Color.FromArgb(180, 150, 0, 255);
+                    _infoPanelHeaderColor = Color.FromArgb(255, 255, 0, 255);
+                    _zeroGammaColor = Color.FromArgb(255, 255, 255, 0);
+                    _majorPosColor = Color.FromArgb(255, 0, 255, 100);
+                    _majorNegColor = Color.FromArgb(255, 255, 50, 150);
+                    break;
+
+                case ThemePreset.Custom:
+                default:
+                    // Keep current settings
+                    break;
+            }
+        }
+        #endregion
+
+        #region API Status & Diagnostics (Section 23)
+        private bool _showApiDiagnostics = false;
+        /// <summary>Show API connection diagnostics</summary>
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Show API Diagnostics", Description = "Display connection status and latency", Order = 10)]
+        public bool ShowApiDiagnostics
+        {
+            get => _showApiDiagnostics;
+            set { _showApiDiagnostics = value; RequestRecalc(); }
+        }
+
+        public enum DiagPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
+        private DiagPanelAlign _diagPanelPosition = DiagPanelAlign.BottomLeft;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Panel Position", Order = 20)]
+        public DiagPanelAlign DiagPanelPosition
+        {
+            get => _diagPanelPosition;
+            set { _diagPanelPosition = value; RequestRecalc(); }
+        }
+
+        private int _diagPanelX = 200;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "X Offset (px)", Order = 30)]
+        [Range(0, 5000)]
+        public int DiagPanelX
+        {
+            get => _diagPanelX;
+            set { _diagPanelX = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _diagPanelY = 70;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Y Offset (px)", Order = 40)]
+        [Range(0, 5000)]
+        public int DiagPanelY
+        {
+            get => _diagPanelY;
+            set { _diagPanelY = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _diagPanelFontSize = 9;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Font Size", Order = 50)]
+        [Range(7, 14)]
+        public int DiagPanelFontSize
+        {
+            get => _diagPanelFontSize;
+            set { _diagPanelFontSize = Math.Clamp(value, 7, 14); RequestRecalc(); }
+        }
+
+        private bool _showConnectionStatus = true;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Show Connection Status", Order = 60)]
+        public bool ShowConnectionStatus
+        {
+            get => _showConnectionStatus;
+            set { _showConnectionStatus = value; RequestRecalc(); }
+        }
+
+        private bool _showLatency = true;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Show Latency", Order = 70)]
+        public bool ShowLatency
+        {
+            get => _showLatency;
+            set { _showLatency = value; RequestRecalc(); }
+        }
+
+        private bool _showErrorCount = true;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Show Error Count", Order = 80)]
+        public bool ShowErrorCount
+        {
+            get => _showErrorCount;
+            set { _showErrorCount = value; RequestRecalc(); }
+        }
+
+        private bool _showActivityLog = true;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Show Activity Log", Order = 90)]
+        public bool ShowActivityLog
+        {
+            get => _showActivityLog;
+            set { _showActivityLog = value; RequestRecalc(); }
+        }
+
+        private int _activityLogMaxItems = 5;
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Activity Log Max Items", Order = 100)]
+        [Range(3, 15)]
+        public int ActivityLogMaxItems
+        {
+            get => _activityLogMaxItems;
+            set { _activityLogMaxItems = Math.Clamp(value, 3, 15); RequestRecalc(); }
+        }
+
+        private Color _diagPanelBackColor = Color.FromArgb(220, 20, 20, 30);
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Background Color", Order = 110)]
+        public Color DiagPanelBackColor
+        {
+            get => _diagPanelBackColor;
+            set { _diagPanelBackColor = value; RequestRecalc(); }
+        }
+
+        private Color _connectedColor = Color.FromArgb(255, 0, 200, 100);
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Connected Color", Order = 120)]
+        public Color ConnectedColor
+        {
+            get => _connectedColor;
+            set { _connectedColor = value; RequestRecalc(); }
+        }
+
+        private Color _disconnectedColor = Color.FromArgb(255, 200, 80, 80);
+        [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Disconnected Color", Order = 130)]
+        public Color DisconnectedColor
+        {
+            get => _disconnectedColor;
+            set { _disconnectedColor = value; RequestRecalc(); }
+        }
+
+        private void AddActivityLog(string message)
+        {
+            lock (_sync)
+            {
+                _apiDiagnostics.ActivityLog.Insert(0, (DateTime.Now, message));
+                while (_apiDiagnostics.ActivityLog.Count > _activityLogMaxItems * 2)
+                {
+                    _apiDiagnostics.ActivityLog.RemoveAt(_apiDiagnostics.ActivityLog.Count - 1);
+                }
+            }
+        }
+
+        private void UpdateLatencyStats(double latencyMs)
+        {
+            lock (_sync)
+            {
+                _apiDiagnostics.LastLatencyMs = latencyMs;
+                _latencyHistory.Enqueue(latencyMs);
+                while (_latencyHistory.Count > MaxLatencyHistory)
+                {
+                    _latencyHistory.Dequeue();
+                }
+                _apiDiagnostics.AverageLatencyMs = _latencyHistory.Average();
+            }
+        }
+        #endregion
+
         #region Constructor
         public GexBotClassicProfile()
         {
@@ -1945,7 +2702,9 @@ namespace ATAS.Indicators.Technical
                 {
                     _error = "API Key is required";
                     _data = null;
+                    _apiDiagnostics.IsConnected = false;
                 }
+                AddActivityLog("⚠ API Key missing");
                 RedrawChart();
                 return;
             }
@@ -1955,14 +2714,29 @@ namespace ATAS.Indicators.Technical
                 var tickerStr = GetTickerString();
                 var url = $"https://api.gexbot.com/{tickerStr}/classic/{_aggregation}?key={_apiKey}";
 
+                // Start timing for latency
+                _apiStopwatch.Restart();
+                AddActivityLog($"→ Requesting {tickerStr}...");
+
                 var response = await _httpClient.GetAsync(url);
+
+                // Stop timing
+                _apiStopwatch.Stop();
+                double latencyMs = _apiStopwatch.Elapsed.TotalMilliseconds;
+                UpdateLatencyStats(latencyMs);
+
                 if (!response.IsSuccessStatusCode)
                 {
                     lock (_sync)
                     {
                         _error = $"API Error: {response.StatusCode}";
                         _data = null;
+                        _apiDiagnostics.IsConnected = false;
+                        _apiDiagnostics.ErrorCount++;
+                        _apiDiagnostics.LastErrorTime = DateTime.Now;
+                        _apiDiagnostics.LastErrorMessage = $"HTTP {(int)response.StatusCode}";
                     }
+                    AddActivityLog($"✗ Error: {response.StatusCode}");
                     RedrawChart();
                     return;
                 }
@@ -1975,6 +2749,29 @@ namespace ATAS.Indicators.Technical
                     _data = parsed;
                     _error = string.Empty;
                     _lastLoad = DateTime.Now;
+                    _apiDiagnostics.IsConnected = true;
+                    _apiDiagnostics.SuccessCount++;
+                    _apiDiagnostics.LastSuccessTime = DateTime.Now;
+                }
+
+                AddActivityLog($"✓ Loaded ({latencyMs:0}ms)");
+
+                // Calculate statistics if enabled
+                if (parsed != null && _showStatisticsPanel)
+                {
+                    CalculateGexStatistics(parsed);
+                }
+
+                // Detect clusters if enabled
+                if (parsed != null && _enableClusterDetection)
+                {
+                    DetectGexClusters(parsed);
+                }
+
+                // Calculate price targets if enabled
+                if (parsed != null && _showPriceTargets)
+                {
+                    CalculatePriceTargets(parsed);
                 }
 
                 // Auto-export if enabled
@@ -1987,11 +2784,17 @@ namespace ATAS.Indicators.Technical
             }
             catch (Exception ex)
             {
+                _apiStopwatch.Stop();
                 lock (_sync)
                 {
                     _error = $"Load error: {ex.Message}";
                     _data = null;
+                    _apiDiagnostics.IsConnected = false;
+                    _apiDiagnostics.ErrorCount++;
+                    _apiDiagnostics.LastErrorTime = DateTime.Now;
+                    _apiDiagnostics.LastErrorMessage = ex.Message;
                 }
+                AddActivityLog($"✗ Exception: {ex.Message.Substring(0, Math.Min(30, ex.Message.Length))}");
                 RedrawChart();
             }
         }
@@ -2338,6 +3141,12 @@ namespace ATAS.Indicators.Technical
             // Draw major levels
             DrawMajorLevels(context, snapshot, factor, fullWidth);
 
+            // Draw GEX cluster zones (Section 18)
+            if (_enableClusterDetection && _showClusterZones)
+            {
+                DrawGexClusters(context, snapshot, factor, fullWidth);
+            }
+
             // Draw info panel
             if (_showInfoPanel)
             {
@@ -2354,6 +3163,30 @@ namespace ATAS.Indicators.Technical
             if (_showMultiTimeframePanel)
             {
                 DrawMultiTimeframePanel(context, snapshot);
+            }
+
+            // Draw statistics panel (Section 19)
+            if (_showStatisticsPanel && _gexStatistics != null)
+            {
+                DrawStatisticsPanel(context);
+            }
+
+            // Draw price targets panel (Section 20)
+            if (_showPriceTargets && _priceTargets.Count > 0)
+            {
+                DrawPriceTargetsPanel(context, snapshot, factor);
+            }
+
+            // Draw session indicator (Section 21)
+            if (_enableSessionFilter && _showSessionIndicator)
+            {
+                DrawSessionIndicator(context, snapshot);
+            }
+
+            // Draw API diagnostics panel (Section 23)
+            if (_showApiDiagnostics)
+            {
+                DrawApiDiagnosticsPanel(context);
             }
 
             // Draw export status
@@ -3773,6 +4606,787 @@ namespace ATAS.Indicators.Technical
                     {
                         _alertHistory.RemoveAt(_alertHistory.Count - 1);
                     }
+                }
+            }
+        }
+        #endregion
+
+        #region GEX Cluster Detection Methods (Section 18)
+        private void DetectGexClusters(GexClassicData data)
+        {
+            lock (_sync)
+            {
+                _gexClusters.Clear();
+
+                if (data?.Strikes == null || data.Strikes.Count < _clusterMinStrikes)
+                    return;
+
+                // Sort strikes by strike price
+                var sortedStrikes = data.Strikes
+                    .Select(s => new { Strike = s.Strike, Gex = _dataSource == GexDataSource.Volume ? s.GexByVolume : s.GexByOI })
+                    .OrderBy(s => s.Strike)
+                    .ToList();
+
+                // Find max GEX for threshold calculation
+                decimal maxAbsGex = sortedStrikes.Max(s => Math.Abs(s.Gex));
+                decimal threshold = maxAbsGex * _clusterGexThreshold;
+
+                // Detect clusters of consecutive strikes with significant GEX
+                var positiveClusters = new List<GexCluster>();
+                var negativeClusters = new List<GexCluster>();
+
+                // Detect positive clusters
+                int i = 0;
+                while (i < sortedStrikes.Count)
+                {
+                    if (sortedStrikes[i].Gex >= threshold)
+                    {
+                        int start = i;
+                        decimal totalGex = 0;
+                        while (i < sortedStrikes.Count && sortedStrikes[i].Gex >= threshold * 0.5m)
+                        {
+                            totalGex += sortedStrikes[i].Gex;
+                            i++;
+                        }
+                        int count = i - start;
+                        if (count >= _clusterMinStrikes)
+                        {
+                            var cluster = new GexCluster
+                            {
+                                StartStrike = sortedStrikes[start].Strike,
+                                EndStrike = sortedStrikes[i - 1].Strike,
+                                CenterStrike = (sortedStrikes[start].Strike + sortedStrikes[i - 1].Strike) / 2,
+                                TotalGex = totalGex,
+                                AverageGex = totalGex / count,
+                                StrikeCount = count,
+                                IsPositive = true,
+                                Strength = Math.Min(100, (totalGex / maxAbsGex) * 100)
+                            };
+                            positiveClusters.Add(cluster);
+                        }
+                    }
+                    else
+                    {
+                        i++;
+                    }
+                }
+
+                // Detect negative clusters
+                i = 0;
+                while (i < sortedStrikes.Count)
+                {
+                    if (sortedStrikes[i].Gex <= -threshold)
+                    {
+                        int start = i;
+                        decimal totalGex = 0;
+                        while (i < sortedStrikes.Count && sortedStrikes[i].Gex <= -threshold * 0.5m)
+                        {
+                            totalGex += sortedStrikes[i].Gex;
+                            i++;
+                        }
+                        int count = i - start;
+                        if (count >= _clusterMinStrikes)
+                        {
+                            var cluster = new GexCluster
+                            {
+                                StartStrike = sortedStrikes[start].Strike,
+                                EndStrike = sortedStrikes[i - 1].Strike,
+                                CenterStrike = (sortedStrikes[start].Strike + sortedStrikes[i - 1].Strike) / 2,
+                                TotalGex = totalGex,
+                                AverageGex = totalGex / count,
+                                StrikeCount = count,
+                                IsPositive = false,
+                                Strength = Math.Min(100, (Math.Abs(totalGex) / maxAbsGex) * 100)
+                            };
+                            negativeClusters.Add(cluster);
+                        }
+                    }
+                    else
+                    {
+                        i++;
+                    }
+                }
+
+                // Combine and sort by strength, take top N
+                var allClusters = positiveClusters.Concat(negativeClusters)
+                    .OrderByDescending(c => c.Strength)
+                    .Take(_maxClustersToShow)
+                    .ToList();
+
+                _gexClusters = allClusters;
+            }
+        }
+
+        private void DrawGexClusters(RenderContext context, GexClassicData data, decimal factor, int fullWidth)
+        {
+            List<GexCluster> clusters;
+            lock (_sync)
+            {
+                clusters = _gexClusters.ToList();
+            }
+
+            if (clusters.Count == 0) return;
+
+            var font = new RenderFont("Arial", 9);
+            var fontSmall = new RenderFont("Arial", 8);
+
+            foreach (var cluster in clusters)
+            {
+                // Convert strikes to chart prices
+                decimal startPrice = _enableConversion ? RoundToStep(cluster.StartStrike * factor, _priceStep) : cluster.StartStrike;
+                decimal endPrice = _enableConversion ? RoundToStep(cluster.EndStrike * factor, _priceStep) : cluster.EndStrike;
+                decimal centerPrice = _enableConversion ? RoundToStep(cluster.CenterStrike * factor, _priceStep) : cluster.CenterStrike;
+
+                int yStart = ChartInfo.PriceChartContainer.GetYByPrice(startPrice, false);
+                int yEnd = ChartInfo.PriceChartContainer.GetYByPrice(endPrice, false);
+                int yCenter = ChartInfo.PriceChartContainer.GetYByPrice(centerPrice, false);
+
+                // Ensure proper ordering (y increases downward in screen coords)
+                int yTop = Math.Min(yStart, yEnd);
+                int yBottom = Math.Max(yStart, yEnd);
+                int height = Math.Max(10, yBottom - yTop);
+
+                // Draw cluster zone
+                var zoneColor = cluster.IsPositive ? _clusterPositiveColor : _clusterNegativeColor;
+                var zoneRect = new Rectangle(0, yTop, fullWidth, height);
+                context.FillRectangle(zoneColor, zoneRect);
+
+                // Draw boundaries
+                if (_showClusterBoundaries)
+                {
+                    var borderColor = cluster.IsPositive
+                        ? Color.FromArgb(150, _clusterPositiveColor)
+                        : Color.FromArgb(150, _clusterNegativeColor);
+                    var boundaryPen = new RenderPen(borderColor, _clusterBoundaryThickness);
+                    context.DrawLine(boundaryPen, 0, yTop, fullWidth, yTop);
+                    context.DrawLine(boundaryPen, 0, yBottom, fullWidth, yBottom);
+                }
+
+                // Draw labels
+                if (_showClusterLabels)
+                {
+                    var labelColor = cluster.IsPositive ? _majorPosColor : _majorNegColor;
+                    var labelText = cluster.IsPositive ? "CLUSTER +" : "CLUSTER -";
+
+                    if (_clusterAsSupportResistance)
+                    {
+                        labelText = cluster.IsPositive ? "RESISTANCE" : "SUPPORT";
+                    }
+
+                    context.DrawString(labelText, font, labelColor, 5, yCenter - 6);
+
+                    if (_showClusterStrength)
+                    {
+                        var strengthText = $"Str: {cluster.Strength:0}%";
+                        context.DrawString(strengthText, fontSmall, Color.Gray, 5, yCenter + 6);
+                    }
+                }
+            }
+        }
+        #endregion
+
+        #region GEX Statistics Methods (Section 19)
+        private void CalculateGexStatistics(GexClassicData data)
+        {
+            lock (_sync)
+            {
+                if (data?.Strikes == null || data.Strikes.Count == 0)
+                {
+                    _gexStatistics = null;
+                    return;
+                }
+
+                var gexValues = data.Strikes
+                    .Select(s => _dataSource == GexDataSource.Volume ? s.GexByVolume : s.GexByOI)
+                    .ToList();
+
+                var positiveValues = gexValues.Where(v => v > 0).ToList();
+                var negativeValues = gexValues.Where(v => v < 0).ToList();
+
+                // Calculate basic statistics
+                decimal mean = gexValues.Average();
+                decimal min = gexValues.Min();
+                decimal max = gexValues.Max();
+
+                // Calculate standard deviation
+                double variance = gexValues.Select(v => Math.Pow((double)(v - mean), 2)).Average();
+                decimal stdDev = (decimal)Math.Sqrt(variance);
+
+                // Calculate percentiles
+                var sortedValues = gexValues.OrderBy(v => v).ToList();
+                decimal p25 = GetPercentile(sortedValues, 25);
+                decimal p50 = GetPercentile(sortedValues, 50);
+                decimal p75 = GetPercentile(sortedValues, 75);
+
+                // Calculate positive/negative sums and ratio
+                decimal positiveSum = positiveValues.Sum();
+                decimal negativeSum = Math.Abs(negativeValues.Sum());
+                decimal ratio = negativeSum != 0 ? positiveSum / negativeSum : (positiveSum > 0 ? 100 : 0);
+
+                // Calculate GEX Score (-100 to +100)
+                decimal totalAbs = positiveSum + negativeSum;
+                decimal gexScore = totalAbs != 0 ? ((positiveSum - negativeSum) / totalAbs) * 100 : 0;
+
+                _gexStatistics = new GexStatistics
+                {
+                    Mean = mean,
+                    StdDev = stdDev,
+                    Min = min,
+                    Max = max,
+                    P25 = p25,
+                    P50 = p50,
+                    P75 = p75,
+                    PositiveSum = positiveSum,
+                    NegativeSum = negativeSum,
+                    PositiveCount = positiveValues.Count,
+                    NegativeCount = negativeValues.Count,
+                    PosNegRatio = ratio,
+                    GexScore = gexScore
+                };
+            }
+        }
+
+        private static decimal GetPercentile(List<decimal> sortedValues, int percentile)
+        {
+            if (sortedValues.Count == 0) return 0;
+            int index = (int)Math.Ceiling(percentile / 100.0 * sortedValues.Count) - 1;
+            index = Math.Clamp(index, 0, sortedValues.Count - 1);
+            return sortedValues[index];
+        }
+
+        private void DrawStatisticsPanel(RenderContext context)
+        {
+            GexStatistics? stats;
+            lock (_sync)
+            {
+                stats = _gexStatistics;
+            }
+
+            if (stats == null) return;
+
+            var font = new RenderFont("Arial", _statsPanelFontSize);
+            var fontBold = new RenderFont("Arial", _statsPanelFontSize + 1);
+            var fontSmall = new RenderFont("Arial", _statsPanelFontSize - 1);
+            var lineHeight = _statsPanelFontSize + 5;
+
+            // Calculate panel dimensions
+            int panelWidth = 180;
+            int rowCount = 5; // Base rows
+            if (_showStatsPercentiles) rowCount += 3;
+            if (_showStatsRatio) rowCount += 2;
+            if (_showGexScore) rowCount += 2;
+            if (_showScoreGauge) rowCount += 1;
+            int panelHeight = lineHeight * rowCount + 25;
+
+            // Calculate position
+            int x, y;
+            switch (_statsPanelPosition)
+            {
+                case StatsPanelAlign.TopRight:
+                    x = ChartInfo.Region.Width - panelWidth - _statsPanelX;
+                    y = _statsPanelY;
+                    break;
+                case StatsPanelAlign.BottomLeft:
+                    x = _statsPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _statsPanelY;
+                    break;
+                case StatsPanelAlign.BottomRight:
+                    x = ChartInfo.Region.Width - panelWidth - _statsPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _statsPanelY;
+                    break;
+                case StatsPanelAlign.TopLeft:
+                default:
+                    x = _statsPanelX;
+                    y = _statsPanelY;
+                    break;
+            }
+
+            // Draw background
+            var backRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(_statsPanelBackColor, backRect);
+            context.DrawRectangle(new RenderPen(_statsPanelBorderColor, 1), backRect);
+
+            int ty = y + 5;
+            int labelX = x + 8;
+            int valueX = x + 90;
+
+            // Header
+            context.DrawString("📊 GEX Statistics", fontBold, _statsPanelHeaderColor, labelX, ty);
+            ty += lineHeight + 4;
+
+            // Mean
+            context.DrawString("Mean", font, Color.Gray, labelX, ty);
+            var meanColor = stats.Mean >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
+            context.DrawString(FormatCompact(stats.Mean), font, meanColor, valueX, ty);
+            ty += lineHeight;
+
+            // Std Dev
+            context.DrawString("Std Dev", font, Color.Gray, labelX, ty);
+            context.DrawString(FormatCompact(stats.StdDev), font, Color.LightGray, valueX, ty);
+            ty += lineHeight;
+
+            // Min / Max
+            context.DrawString("Min", font, Color.Gray, labelX, ty);
+            context.DrawString(FormatCompact(stats.Min), font, _infoPanelAccentNegative, valueX, ty);
+            ty += lineHeight;
+
+            context.DrawString("Max", font, Color.Gray, labelX, ty);
+            context.DrawString(FormatCompact(stats.Max), font, _infoPanelAccentPositive, valueX, ty);
+            ty += lineHeight;
+
+            // Percentiles
+            if (_showStatsPercentiles)
+            {
+                ty += 3;
+                context.DrawString("P25", font, Color.Gray, labelX, ty);
+                context.DrawString(FormatCompact(stats.P25), font, Color.LightGray, valueX, ty);
+                ty += lineHeight;
+
+                context.DrawString("P50 (Med)", font, Color.Gray, labelX, ty);
+                context.DrawString(FormatCompact(stats.P50), font, Color.Cyan, valueX, ty);
+                ty += lineHeight;
+
+                context.DrawString("P75", font, Color.Gray, labelX, ty);
+                context.DrawString(FormatCompact(stats.P75), font, Color.LightGray, valueX, ty);
+                ty += lineHeight;
+            }
+
+            // Ratio
+            if (_showStatsRatio)
+            {
+                ty += 3;
+                context.DrawString("Pos Count", font, _infoPanelAccentPositive, labelX, ty);
+                context.DrawString($"{stats.PositiveCount}", font, Color.White, valueX, ty);
+                ty += lineHeight;
+
+                context.DrawString("Neg Count", font, _infoPanelAccentNegative, labelX, ty);
+                context.DrawString($"{stats.NegativeCount}", font, Color.White, valueX, ty);
+                ty += lineHeight;
+
+                context.DrawString("Pos/Neg", font, Color.Gray, labelX, ty);
+                context.DrawString($"{stats.PosNegRatio:0.00}", font, Color.Yellow, valueX, ty);
+                ty += lineHeight;
+            }
+
+            // GEX Score
+            if (_showGexScore)
+            {
+                ty += 5;
+                var scoreColor = stats.GexScore >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
+                context.DrawString("GEX Score", fontBold, Color.White, labelX, ty);
+                context.DrawString($"{stats.GexScore:+0.0;-0.0}", fontBold, scoreColor, valueX, ty);
+                ty += lineHeight;
+
+                // Draw gauge
+                if (_showScoreGauge)
+                {
+                    ty += 2;
+                    DrawScoreGauge(context, labelX, ty, _scoreGaugeWidth, 10, stats.GexScore);
+                    ty += 14;
+                }
+            }
+        }
+
+        private void DrawScoreGauge(RenderContext context, int x, int y, int width, int height, decimal score)
+        {
+            // Background
+            context.FillRectangle(Color.FromArgb(100, 50, 50, 50), new Rectangle(x, y, width, height));
+
+            // Center line (zero point)
+            int centerX = x + width / 2;
+            context.DrawLine(new RenderPen(Color.FromArgb(150, 255, 255, 255), 1), centerX, y, centerX, y + height);
+
+            // Score bar
+            decimal normalizedScore = Math.Clamp(score, -100, 100);
+            int barWidth = (int)(Math.Abs(normalizedScore) / 100m * (width / 2));
+            var barColor = score >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
+
+            if (score >= 0)
+            {
+                context.FillRectangle(barColor, new Rectangle(centerX, y + 1, barWidth, height - 2));
+            }
+            else
+            {
+                context.FillRectangle(barColor, new Rectangle(centerX - barWidth, y + 1, barWidth, height - 2));
+            }
+
+            // Border
+            context.DrawRectangle(new RenderPen(Color.FromArgb(100, 150, 150, 150), 1), new Rectangle(x, y, width, height));
+        }
+        #endregion
+
+        #region Price Target Methods (Section 20)
+        private void CalculatePriceTargets(GexClassicData data)
+        {
+            lock (_sync)
+            {
+                _priceTargets.Clear();
+
+                if (data == null || data.Spot <= 0) return;
+
+                decimal spot = data.Spot;
+
+                // Zero Gamma target
+                if (data.ZeroGamma > 0)
+                {
+                    decimal distance = data.ZeroGamma - spot;
+                    decimal distPct = (distance / spot) * 100;
+                    decimal attraction = CalculateAttraction(Math.Abs(distance), spot, 50); // Base attraction
+
+                    _priceTargets.Add(new PriceTarget
+                    {
+                        Price = data.ZeroGamma,
+                        Name = "Zero Gamma",
+                        Distance = distance,
+                        DistancePercent = distPct,
+                        Attraction = attraction,
+                        Color = _zeroGammaColor
+                    });
+                }
+
+                // Major Positive target
+                var majorPos = _dataSource == GexDataSource.Volume ? data.MajorPosVol : data.MajorPosOI;
+                if (majorPos > 0)
+                {
+                    decimal distance = majorPos - spot;
+                    decimal distPct = (distance / spot) * 100;
+                    decimal attraction = CalculateAttraction(Math.Abs(distance), spot, 80);
+
+                    _priceTargets.Add(new PriceTarget
+                    {
+                        Price = majorPos,
+                        Name = "Major Pos",
+                        Distance = distance,
+                        DistancePercent = distPct,
+                        Attraction = attraction,
+                        Color = _majorPosColor
+                    });
+                }
+
+                // Major Negative target
+                var majorNeg = _dataSource == GexDataSource.Volume ? data.MajorNegVol : data.MajorNegOI;
+                if (majorNeg > 0)
+                {
+                    decimal distance = majorNeg - spot;
+                    decimal distPct = (distance / spot) * 100;
+                    decimal attraction = CalculateAttraction(Math.Abs(distance), spot, 80);
+
+                    _priceTargets.Add(new PriceTarget
+                    {
+                        Price = majorNeg,
+                        Name = "Major Neg",
+                        Distance = distance,
+                        DistancePercent = distPct,
+                        Attraction = attraction,
+                        Color = _majorNegColor
+                    });
+                }
+
+                // Sort by absolute distance
+                _priceTargets = _priceTargets.OrderBy(t => Math.Abs(t.Distance)).ToList();
+            }
+        }
+
+        private static decimal CalculateAttraction(decimal distance, decimal spot, decimal baseStrength)
+        {
+            // Attraction decreases with distance (inverse relationship)
+            decimal distPercent = (distance / spot) * 100;
+            decimal attraction = baseStrength * (1 - Math.Min(1, distPercent / 10m));
+            return Math.Clamp(attraction, 0, 100);
+        }
+
+        private void DrawPriceTargetsPanel(RenderContext context, GexClassicData data, decimal factor)
+        {
+            List<PriceTarget> targets;
+            lock (_sync)
+            {
+                targets = _priceTargets.ToList();
+            }
+
+            if (!_showTargetPanel || targets.Count == 0) return;
+
+            var font = new RenderFont("Arial", 9);
+            var fontBold = new RenderFont("Arial", 10);
+            var fontSmall = new RenderFont("Arial", 8);
+            var lineHeight = 14;
+
+            // Panel dimensions
+            int panelWidth = 200;
+            int rowCount = targets.Count + 2;
+            if (_showAttractionBars) rowCount += targets.Count;
+            int panelHeight = lineHeight * rowCount + 20;
+
+            // Calculate position
+            int x, y;
+            switch (_targetPanelPosition)
+            {
+                case TargetPanelAlign.TopRight:
+                    x = ChartInfo.Region.Width - panelWidth - _targetPanelX;
+                    y = _targetPanelY;
+                    break;
+                case TargetPanelAlign.BottomLeft:
+                    x = _targetPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _targetPanelY;
+                    break;
+                case TargetPanelAlign.BottomRight:
+                    x = ChartInfo.Region.Width - panelWidth - _targetPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _targetPanelY;
+                    break;
+                case TargetPanelAlign.TopLeft:
+                default:
+                    x = _targetPanelX;
+                    y = _targetPanelY;
+                    break;
+            }
+
+            // Draw background
+            var backRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(Color.FromArgb(220, 25, 25, 35), backRect);
+            context.DrawRectangle(new RenderPen(Color.FromArgb(150, 80, 80, 100), 1), backRect);
+
+            int ty = y + 5;
+            int labelX = x + 8;
+
+            // Header
+            context.DrawString("🎯 Price Targets", fontBold, Color.FromArgb(255, 255, 180, 100), labelX, ty);
+            ty += lineHeight + 4;
+
+            // Columns
+            int nameCol = labelX;
+            int priceCol = x + 70;
+            int distCol = x + 130;
+
+            foreach (var target in targets)
+            {
+                var arrow = target.Distance > 0 ? "▲" : "▼";
+                var distColor = target.Distance > 0 ? _targetArrowUpColor : _targetArrowDownColor;
+
+                // Target name
+                context.DrawString(target.Name, font, target.Color, nameCol, ty);
+
+                // Price
+                context.DrawString($"{target.Price:0.00}", font, Color.White, priceCol, ty);
+
+                // Distance with arrow
+                if (_showTargetArrows)
+                {
+                    context.DrawString($"{arrow}{target.DistancePercent:+0.0;-0.0}%", font, distColor, distCol, ty);
+                }
+                ty += lineHeight;
+
+                // Attraction bar
+                if (_showAttractionBars && _showAttractionIndicator)
+                {
+                    int barWidth = (int)(target.Attraction / 100m * 120);
+                    var barColor = Color.FromArgb(150, target.Color);
+                    context.FillRectangle(Color.FromArgb(40, 100, 100, 100), new Rectangle(nameCol, ty, 120, 6));
+                    context.FillRectangle(barColor, new Rectangle(nameCol, ty, barWidth, 6));
+                    context.DrawString($"{target.Attraction:0}%", fontSmall, Color.Gray, nameCol + 125, ty - 2);
+                    ty += 10;
+                }
+            }
+        }
+        #endregion
+
+        #region Session Indicator Methods (Section 21)
+        private void DrawSessionIndicator(RenderContext context, GexClassicData data)
+        {
+            var font = new RenderFont("Arial", 9);
+            var fontBold = new RenderFont("Arial", 10);
+            var fontSmall = new RenderFont("Arial", 8);
+
+            var now = DateTime.Now;
+            var currentTime = now.TimeOfDay;
+            bool isMarketOpen = currentTime >= _marketOpenTime && currentTime < _marketCloseTime;
+
+            // Check if weekend
+            bool isWeekend = now.DayOfWeek == DayOfWeek.Saturday || now.DayOfWeek == DayOfWeek.Sunday;
+            if (isWeekend) isMarketOpen = false;
+
+            // Panel dimensions
+            int panelWidth = 160;
+            int panelHeight = 70;
+            if (_showSessionProgress) panelHeight += 15;
+            if (_showTimeToExpiry && data.MinDte == 0) panelHeight += 15;
+
+            // Position (top center)
+            int x = (ChartInfo.Region.Width - panelWidth) / 2;
+            int y = 10;
+
+            // Draw background
+            var backRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(Color.FromArgb(200, 20, 20, 30), backRect);
+
+            var borderColor = isMarketOpen ? _sessionActiveColor : _sessionClosedColor;
+            context.DrawRectangle(new RenderPen(borderColor, 2), backRect);
+
+            int ty = y + 5;
+            int labelX = x + 8;
+
+            // Status indicator
+            var statusColor = isMarketOpen ? _sessionActiveColor : _sessionClosedColor;
+            var statusIcon = isMarketOpen ? "🟢" : "🔴";
+            var statusText = isMarketOpen ? "MARKET OPEN" : (isWeekend ? "WEEKEND" : "MARKET CLOSED");
+            context.DrawString($"{statusIcon} {statusText}", fontBold, statusColor, labelX, ty);
+            ty += 18;
+
+            // Current time
+            context.DrawString($"Time: {now:HH:mm:ss}", font, Color.LightGray, labelX, ty);
+            ty += 14;
+
+            // Session progress
+            if (_showSessionProgress && isMarketOpen)
+            {
+                var sessionDuration = _marketCloseTime - _marketOpenTime;
+                var elapsed = currentTime - _marketOpenTime;
+                double progress = elapsed.TotalSeconds / sessionDuration.TotalSeconds;
+                progress = Math.Clamp(progress, 0, 1);
+
+                int progressWidth = panelWidth - 20;
+                int progressX = labelX;
+
+                // Background
+                context.FillRectangle(Color.FromArgb(60, 100, 100, 100), new Rectangle(progressX, ty, progressWidth, 8));
+
+                // Progress bar
+                int filledWidth = (int)(progressWidth * progress);
+                context.FillRectangle(_sessionActiveColor, new Rectangle(progressX, ty, filledWidth, 8));
+
+                // Percentage
+                context.DrawString($"{progress * 100:0}%", fontSmall, Color.Gray, progressX + progressWidth + 5, ty - 2);
+                ty += 14;
+            }
+
+            // 0DTE highlight
+            if (_highlight0DTE && data.MinDte == 0)
+            {
+                var badgeRect = new Rectangle(labelX, ty, 50, 14);
+                context.FillRectangle(Color.FromArgb(100, _zeroDteBadgeColor), badgeRect);
+                context.DrawString("0DTE", fontBold, _zeroDteBadgeColor, labelX + 5, ty);
+
+                if (_showTimeToExpiry && isMarketOpen)
+                {
+                    var timeToClose = _marketCloseTime - currentTime;
+                    if (timeToClose.TotalSeconds > 0)
+                    {
+                        var expiryText = $"{(int)timeToClose.TotalHours}h {timeToClose.Minutes}m left";
+                        context.DrawString(expiryText, fontSmall, Color.Orange, labelX + 55, ty + 2);
+                    }
+                }
+                ty += 16;
+            }
+        }
+        #endregion
+
+        #region API Diagnostics Methods (Section 23)
+        private void DrawApiDiagnosticsPanel(RenderContext context)
+        {
+            ApiDiagnostics diag;
+            lock (_sync)
+            {
+                diag = _apiDiagnostics;
+            }
+
+            var font = new RenderFont("Arial", _diagPanelFontSize);
+            var fontBold = new RenderFont("Arial", _diagPanelFontSize + 1);
+            var fontSmall = new RenderFont("Arial", _diagPanelFontSize - 1);
+            var lineHeight = _diagPanelFontSize + 5;
+
+            // Calculate panel height based on content
+            int rowCount = 2; // Header + status
+            if (_showConnectionStatus) rowCount += 1;
+            if (_showLatency) rowCount += 2;
+            if (_showErrorCount) rowCount += 1;
+            if (_showActivityLog) rowCount += Math.Min(diag.ActivityLog.Count, _activityLogMaxItems) + 1;
+            int panelHeight = lineHeight * rowCount + 20;
+            int panelWidth = 200;
+
+            // Calculate position
+            int x, y;
+            switch (_diagPanelPosition)
+            {
+                case DiagPanelAlign.TopRight:
+                    x = ChartInfo.Region.Width - panelWidth - _diagPanelX;
+                    y = _diagPanelY;
+                    break;
+                case DiagPanelAlign.BottomLeft:
+                    x = _diagPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _diagPanelY;
+                    break;
+                case DiagPanelAlign.BottomRight:
+                    x = ChartInfo.Region.Width - panelWidth - _diagPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _diagPanelY;
+                    break;
+                case DiagPanelAlign.TopLeft:
+                default:
+                    x = _diagPanelX;
+                    y = _diagPanelY;
+                    break;
+            }
+
+            // Draw background
+            var backRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(_diagPanelBackColor, backRect);
+            context.DrawRectangle(new RenderPen(Color.FromArgb(150, 80, 80, 100), 1), backRect);
+
+            int ty = y + 5;
+            int labelX = x + 8;
+            int valueX = x + 100;
+
+            // Header
+            var headerColor = diag.IsConnected ? _connectedColor : _disconnectedColor;
+            context.DrawString("🔌 API Diagnostics", fontBold, headerColor, labelX, ty);
+            ty += lineHeight + 4;
+
+            // Connection status
+            if (_showConnectionStatus)
+            {
+                var statusIcon = diag.IsConnected ? "●" : "○";
+                var statusText = diag.IsConnected ? "Connected" : "Disconnected";
+                var statusColor = diag.IsConnected ? _connectedColor : _disconnectedColor;
+                context.DrawString("Status", font, Color.Gray, labelX, ty);
+                context.DrawString($"{statusIcon} {statusText}", font, statusColor, valueX, ty);
+                ty += lineHeight;
+            }
+
+            // Latency
+            if (_showLatency)
+            {
+                context.DrawString("Last Latency", font, Color.Gray, labelX, ty);
+                var latencyColor = diag.LastLatencyMs < 500 ? _connectedColor :
+                                   diag.LastLatencyMs < 1500 ? Color.Yellow : _disconnectedColor;
+                context.DrawString($"{diag.LastLatencyMs:0}ms", font, latencyColor, valueX, ty);
+                ty += lineHeight;
+
+                context.DrawString("Avg Latency", font, Color.Gray, labelX, ty);
+                context.DrawString($"{diag.AverageLatencyMs:0}ms", font, Color.LightGray, valueX, ty);
+                ty += lineHeight;
+            }
+
+            // Error count
+            if (_showErrorCount)
+            {
+                context.DrawString("Success/Errors", font, Color.Gray, labelX, ty);
+                var errColor = diag.ErrorCount > 0 ? _disconnectedColor : Color.LightGray;
+                context.DrawString($"{diag.SuccessCount}/{diag.ErrorCount}", font, errColor, valueX, ty);
+                ty += lineHeight;
+            }
+
+            // Activity log
+            if (_showActivityLog && diag.ActivityLog.Count > 0)
+            {
+                ty += 3;
+                context.DrawString("Activity Log", fontSmall, Color.DimGray, labelX, ty);
+                ty += lineHeight - 2;
+
+                var logEntries = diag.ActivityLog.Take(_activityLogMaxItems);
+                foreach (var entry in logEntries)
+                {
+                    var timeText = entry.Time.ToString("HH:mm:ss");
+                    var logColor = entry.Message.StartsWith("✓") ? _connectedColor :
+                                   entry.Message.StartsWith("✗") ? _disconnectedColor : Color.Gray;
+                    context.DrawString($"{timeText} {entry.Message}", fontSmall, logColor, labelX, ty);
+                    ty += lineHeight - 2;
                 }
             }
         }
