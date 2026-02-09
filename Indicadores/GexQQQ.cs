@@ -1009,12 +1009,18 @@ namespace ATAS.Indicators.Technical
             var font = new RenderFont("Arial", _infoPanelFontSize);
             var fontBold = new RenderFont("Arial", _infoPanelFontSize + 1);
             var fontSmall = new RenderFont("Arial", _infoPanelFontSize - 1);
-            var lineHeight = _infoPanelFontSize + 8;
-            var rowHeight = _infoPanelFontSize + 12;
+            var lineHeight = _infoPanelFontSize + 6;
+            var sectionGap = 8;
 
-            // Calculate panel dimensions
-            int panelWidth = Math.Max(200, _infoPanelBarWidth + 100);
-            int panelHeight = rowHeight * 8 + 20;
+            // Calculate panel dimensions - larger to fit all sections
+            int panelWidth = Math.Max(280, _infoPanelBarWidth + 140);
+            int col1 = 85;  // Label column width
+            int col2 = 70;  // Strike column width
+            int col3 = panelWidth - col1 - col2 - 30; // Value column
+
+            // Calculate total height based on content
+            int numRows = 22; // Approximate rows including headers and spacing
+            int panelHeight = lineHeight * numRows + sectionGap * 5 + 30;
 
             // Calculate position based on alignment
             int x, y;
@@ -1039,78 +1045,202 @@ namespace ATAS.Indicators.Technical
                     break;
             }
 
-            // Draw background with rounded effect (solid rectangle + border)
+            // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);
             context.FillRectangle(_infoPanelBackColor, backRect);
             context.DrawRectangle(new RenderPen(_infoPanelBorderColor, 1), backRect);
 
-            // Header bar
-            var headerRect = new Rectangle(x, y, panelWidth, lineHeight + 4);
-            context.FillRectangle(Color.FromArgb(80, _infoPanelHeaderColor), headerRect);
-            context.DrawString($"⚡ GexBot Classic - {data.Ticker}", fontBold, _infoPanelHeaderColor, x + 8, y + 4);
-
-            int ty = y + lineHeight + 10;
+            int ty = y + 8;
             int labelX = x + 10;
-            int valueX = x + 90;
-            int barX = x + 10;
-            int barMaxW = _infoPanelBarWidth;
+            int strikeX = x + col1 + 10;
+            int valueX = x + col1 + col2 + 15;
 
-            // Spot price row with indicator
-            var spotColor = data.Spot > 0 ? _infoPanelAccentPositive : _infoPanelTextColor;
-            context.DrawString("Spot:", font, Color.Gray, labelX, ty);
-            context.DrawString($"{data.Spot:0.00}", font, spotColor, valueX, ty);
+            // ═══════════════════════════════════════════════════════════
+            // SECTION: UPDATE
+            // ═══════════════════════════════════════════════════════════
+            DrawSectionHeader(context, "update", x, ty, panelWidth, fontBold, _infoPanelHeaderColor);
+            ty += lineHeight + 4;
+
+            // Date
+            context.DrawString("date", font, Color.Gray, labelX, ty);
+            var dateStr = lastLoad.HasValue ? lastLoad.Value.ToString("M/d/yyyy") : "-";
+            context.DrawString(dateStr, font, _infoPanelTextColor, valueX, ty);
             ty += lineHeight;
 
-            // Zero Gamma row with visual indicator
-            var zgColor = _zeroGammaColor;
-            context.DrawString("Zero Gamma:", font, Color.Gray, labelX, ty);
-            context.DrawString($"{data.ZeroGamma:0.00}", font, zgColor, valueX, ty);
-            // Small indicator dot
-            context.FillRectangle(zgColor, new Rectangle(x + panelWidth - 20, ty + 4, 8, 8));
+            // Time
+            context.DrawString("time", font, Color.Gray, labelX, ty);
+            var timeStr = lastLoad.HasValue ? lastLoad.Value.ToString("h:mm:ss tt") : "-";
+            context.DrawString(timeStr, font, _infoPanelTextColor, valueX, ty);
             ty += lineHeight;
 
-            // Net GEX Volume with visual bar
+            // Spot
+            context.DrawString("spot", font, Color.Gray, labelX, ty);
+            context.DrawString($"{data.Spot:0.00}", font, _infoPanelAccentPositive, valueX, ty);
+            ty += lineHeight + sectionGap;
+
+            // ═══════════════════════════════════════════════════════════
+            // SECTION: VOLUME
+            // ═══════════════════════════════════════════════════════════
+            DrawSectionHeader(context, "volume", x, ty, panelWidth, fontBold, _infoPanelHeaderColor);
+            ty += lineHeight + 4;
+
+            // Zero Gamma
+            context.DrawString("zero gamma", font, _zeroGammaColor, labelX, ty);
+            context.DrawString($"{data.ZeroGamma:0.00}", font, _zeroGammaColor, valueX, ty);
+            ty += lineHeight;
+
+            // Major Positive (Vol)
+            context.DrawString("major positive", font, _majorPosColor, labelX, ty);
+            context.DrawString($"{data.MajorPosVol:0.00}", font, _majorPosColor, valueX, ty);
+            ty += lineHeight;
+
+            // Major Negative (Vol)
+            context.DrawString("major negative", font, _majorNegColor, labelX, ty);
+            context.DrawString($"{data.MajorNegVol:0.00}", font, _majorNegColor, valueX, ty);
+            ty += lineHeight;
+
+            // Net GEX (Vol)
+            context.DrawString("net gex", font, Color.Gray, labelX, ty);
             var gexVolColor = data.SumGexVol >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
-            context.DrawString("Net GEX (Vol):", font, Color.Gray, labelX, ty);
-            context.DrawString(FormatCompact(data.SumGexVol), font, gexVolColor, valueX + 60, ty);
+            context.DrawString(FormatCompact(data.SumGexVol), font, gexVolColor, valueX, ty);
             if (_showInfoPanelBars)
             {
-                DrawGexBar(context, barX, ty + lineHeight - 2, barMaxW, 6, data.SumGexVol, data.SumGexVol, data.SumGexOI);
-                ty += 10;
+                ty += lineHeight;
+                DrawGexBar(context, labelX, ty, panelWidth - 30, 5, data.SumGexVol, data.SumGexVol, data.SumGexOI);
+                ty += 8;
             }
+            else
+            {
+                ty += lineHeight;
+            }
+            ty += sectionGap;
+
+            // ═══════════════════════════════════════════════════════════
+            // SECTION: OPEN INTEREST
+            // ═══════════════════════════════════════════════════════════
+            DrawSectionHeader(context, "open interest", x, ty, panelWidth, fontBold, _infoPanelHeaderColor);
+            ty += lineHeight + 4;
+
+            // Major Positive (OI)
+            context.DrawString("major positive", font, _majorPosColor, labelX, ty);
+            context.DrawString($"{data.MajorPosOI:0.00}", font, _majorPosColor, valueX, ty);
             ty += lineHeight;
 
-            // Net GEX OI with visual bar
+            // Major Negative (OI)
+            context.DrawString("major negative", font, _majorNegColor, labelX, ty);
+            context.DrawString($"{data.MajorNegOI:0.00}", font, _majorNegColor, valueX, ty);
+            ty += lineHeight;
+
+            // Net GEX (OI)
+            context.DrawString("net gex", font, Color.Gray, labelX, ty);
             var gexOiColor = data.SumGexOI >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
-            context.DrawString("Net GEX (OI):", font, Color.Gray, labelX, ty);
-            context.DrawString(FormatCompact(data.SumGexOI), font, gexOiColor, valueX + 60, ty);
+            context.DrawString(FormatCompact(data.SumGexOI), font, gexOiColor, valueX, ty);
             if (_showInfoPanelBars)
             {
-                DrawGexBar(context, barX, ty + lineHeight - 2, barMaxW, 6, data.SumGexOI, data.SumGexVol, data.SumGexOI);
-                ty += 10;
+                ty += lineHeight;
+                DrawGexBar(context, labelX, ty, panelWidth - 30, 5, data.SumGexOI, data.SumGexVol, data.SumGexOI);
+                ty += 8;
             }
-            ty += lineHeight;
+            else
+            {
+                ty += lineHeight;
+            }
+            ty += sectionGap;
 
-            // DTE info with badge style
+            // ═══════════════════════════════════════════════════════════
+            // SECTION: MAX CHANGE GEX (using priors data)
+            // ═══════════════════════════════════════════════════════════
+            DrawSectionHeader(context, "max change gex", x, ty, panelWidth, fontBold, _infoPanelHeaderColor);
+            ty += lineHeight + 4;
+
+            // For each time period, find the strike with the maximum GEX change
+            string[] priorLabels = { "1 min", "5 min", "10 min", "15 min", "30 min" };
+
+            // Check if any strike has priors data
+            bool hasPriors = data.Strikes.Any(s => s.Priors.Length > 0);
+
+            if (hasPriors)
+            {
+                for (int periodIndex = 0; periodIndex < priorLabels.Length; periodIndex++)
+                {
+                    // Find the strike with maximum absolute change for this time period
+                    GexStrike? maxChangeStrike = null;
+                    decimal maxChange = 0;
+
+                    foreach (var strike in data.Strikes)
+                    {
+                        if (strike.Priors.Length > periodIndex)
+                        {
+                            var currentGex = _dataSource == GexDataSource.Volume ? strike.GexByVolume : strike.GexByOI;
+                            var priorGex = strike.Priors[periodIndex];
+                            var change = currentGex - priorGex;
+
+                            if (Math.Abs(change) > Math.Abs(maxChange))
+                            {
+                                maxChange = change;
+                                maxChangeStrike = strike;
+                            }
+                        }
+                    }
+
+                    if (maxChangeStrike != null)
+                    {
+                        context.DrawString(priorLabels[periodIndex], font, Color.Gray, labelX, ty);
+
+                        // Strike color matches the change direction
+                        var changeColor = maxChange >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
+                        context.DrawString($"{maxChangeStrike.Strike:0}", font, changeColor, strikeX, ty);
+                        context.DrawString(FormatCompact(maxChange), font, changeColor, valueX, ty);
+                        ty += lineHeight;
+                    }
+                }
+            }
+            else
+            {
+                // No priors data available - show current top strikes instead
+                var topStrikes = data.Strikes
+                    .OrderByDescending(s => Math.Abs(_dataSource == GexDataSource.Volume ? s.GexByVolume : s.GexByOI))
+                    .Take(5)
+                    .ToList();
+
+                for (int i = 0; i < topStrikes.Count; i++)
+                {
+                    var strike = topStrikes[i];
+                    var gexVal = _dataSource == GexDataSource.Volume ? strike.GexByVolume : strike.GexByOI;
+                    var changeColor = gexVal >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
+
+                    context.DrawString($"#{i + 1}", font, Color.Gray, labelX, ty);
+                    context.DrawString($"{strike.Strike:0}", font, Color.Cyan, strikeX, ty);
+                    context.DrawString(FormatCompact(gexVal), font, changeColor, valueX, ty);
+                    ty += lineHeight;
+                }
+            }
+
+            // DTE badge at bottom
+            ty += 4;
             var dteText = data.MinDte == 0 ? "0DTE" : $"{data.MinDte}DTE";
-            var dteColor = data.MinDte == 0 ? Color.Gold : _infoPanelTextColor;
-            context.DrawString("Expiry:", font, Color.Gray, labelX, ty);
-            // Badge background for 0DTE
+            var dteColor = data.MinDte == 0 ? Color.Gold : Color.White;
             if (data.MinDte == 0)
             {
-                var badgeRect = new Rectangle(valueX - 2, ty - 2, 40, lineHeight - 2);
+                var badgeRect = new Rectangle(labelX - 2, ty - 2, 45, lineHeight);
                 context.FillRectangle(Color.FromArgb(100, Color.Gold), badgeRect);
             }
-            context.DrawString(dteText, font, dteColor, valueX, ty);
-            context.DrawString($"/ {data.SecMinDte}DTE", fontSmall, Color.Gray, valueX + 45, ty + 2);
-            ty += lineHeight;
+            context.DrawString(dteText, fontSmall, dteColor, labelX, ty);
+            context.DrawString($"/ {data.SecMinDte}DTE", fontSmall, Color.Gray, labelX + 50, ty);
+        }
 
-            // Timestamp row
-            if (lastLoad.HasValue)
-            {
-                context.DrawString("Updated:", font, Color.Gray, labelX, ty);
-                context.DrawString($"{lastLoad.Value:HH:mm:ss}", fontSmall, Color.FromArgb(180, 150, 150, 150), valueX, ty);
-            }
+        private void DrawSectionHeader(RenderContext context, string title, int x, int y, int width, RenderFont font, Color color)
+        {
+            // Draw section header with underline effect
+            int headerHeight = (int)font.Size + 6;
+            var headerRect = new Rectangle(x, y, width, headerHeight);
+            context.FillRectangle(Color.FromArgb(40, color), headerRect);
+            context.DrawString(title, font, color, x + 10, y + 2);
+
+            // Subtle line under header
+            int lineY = y + (int)font.Size + 5;
+            var linePen = new RenderPen(Color.FromArgb(60, color), 1);
+            context.DrawLine(linePen, x + 5, lineY, x + width - 5, lineY);
         }
 
         private void DrawGexBar(RenderContext context, int x, int y, int maxWidth, int height, decimal value, decimal maxVol, decimal maxOi)
