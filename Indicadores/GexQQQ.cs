@@ -723,6 +723,126 @@ namespace ATAS.Indicators.Technical
         }
         #endregion
 
+        #region Direction Arrows
+        private bool _showDirectionArrows = true;
+        [Display(GroupName = "10. Direction Arrows", Name = "Show direction arrows", Order = 10)]
+        public bool ShowDirectionArrows
+        {
+            get => _showDirectionArrows;
+            set { _showDirectionArrows = value; RequestRecalc(); }
+        }
+
+        public enum ArrowTimePeriod { OneMin, FiveMin, TenMin, FifteenMin, ThirtyMin }
+        private ArrowTimePeriod _arrowTimePeriod = ArrowTimePeriod.FiveMin;
+        [Display(GroupName = "10. Direction Arrows", Name = "Comparison period", Order = 20)]
+        public ArrowTimePeriod ArrowPeriod
+        {
+            get => _arrowTimePeriod;
+            set { _arrowTimePeriod = value; RequestRecalc(); }
+        }
+
+        private int _arrowFontSize = 10;
+        [Display(GroupName = "10. Direction Arrows", Name = "Arrow size", Order = 30)]
+        [Range(6, 24)]
+        public int ArrowFontSize
+        {
+            get => _arrowFontSize;
+            set { _arrowFontSize = Math.Clamp(value, 6, 24); RequestRecalc(); }
+        }
+
+        private Color _arrowUpColor = Color.FromArgb(255, 0, 255, 120);
+        [Display(GroupName = "10. Direction Arrows", Name = "Up arrow color", Order = 40)]
+        public Color ArrowUpColor
+        {
+            get => _arrowUpColor;
+            set { _arrowUpColor = value; RequestRecalc(); }
+        }
+
+        private Color _arrowDownColor = Color.FromArgb(255, 255, 80, 80);
+        [Display(GroupName = "10. Direction Arrows", Name = "Down arrow color", Order = 50)]
+        public Color ArrowDownColor
+        {
+            get => _arrowDownColor;
+            set { _arrowDownColor = value; RequestRecalc(); }
+        }
+
+        private int _arrowOffsetPx = 2;
+        [Display(GroupName = "10. Direction Arrows", Name = "Arrow offset (px)", Order = 60)]
+        [Range(0, 50)]
+        public int ArrowOffsetPx
+        {
+            get => _arrowOffsetPx;
+            set { _arrowOffsetPx = Math.Clamp(value, 0, 50); RequestRecalc(); }
+        }
+
+        private decimal _arrowMinChange = 0m;
+        [Display(GroupName = "10. Direction Arrows", Name = "Min change to show arrow", Order = 70)]
+        public decimal ArrowMinChange
+        {
+            get => _arrowMinChange;
+            set { _arrowMinChange = Math.Max(0, value); RequestRecalc(); }
+        }
+        #endregion
+
+        #region Gamma Zones
+        private bool _showGammaZones = false;
+        [Display(GroupName = "11. Gamma Zones", Name = "Show gamma zones", Order = 10)]
+        public bool ShowGammaZones
+        {
+            get => _showGammaZones;
+            set { _showGammaZones = value; RequestRecalc(); }
+        }
+
+        private Color _positiveZoneColor = Color.FromArgb(15, 0, 200, 100);
+        [Display(GroupName = "11. Gamma Zones", Name = "Positive zone color", Order = 20)]
+        public Color PositiveZoneColor
+        {
+            get => _positiveZoneColor;
+            set { _positiveZoneColor = value; RequestRecalc(); }
+        }
+
+        private Color _negativeZoneColor = Color.FromArgb(15, 200, 60, 60);
+        [Display(GroupName = "11. Gamma Zones", Name = "Negative zone color", Order = 30)]
+        public Color NegativeZoneColor
+        {
+            get => _negativeZoneColor;
+            set { _negativeZoneColor = value; RequestRecalc(); }
+        }
+
+        private bool _showZoneBoundary = true;
+        [Display(GroupName = "11. Gamma Zones", Name = "Show zone boundary", Order = 40)]
+        public bool ShowZoneBoundary
+        {
+            get => _showZoneBoundary;
+            set { _showZoneBoundary = value; RequestRecalc(); }
+        }
+
+        private Color _zoneBoundaryColor = Color.FromArgb(100, 255, 255, 0);
+        [Display(GroupName = "11. Gamma Zones", Name = "Zone boundary color", Order = 50)]
+        public Color ZoneBoundaryColor
+        {
+            get => _zoneBoundaryColor;
+            set { _zoneBoundaryColor = value; RequestRecalc(); }
+        }
+
+        private bool _showZoneLabels = true;
+        [Display(GroupName = "11. Gamma Zones", Name = "Show zone labels", Order = 60)]
+        public bool ShowZoneLabels
+        {
+            get => _showZoneLabels;
+            set { _showZoneLabels = value; RequestRecalc(); }
+        }
+
+        public enum ZoneLabelAlign { Left, Right, Center }
+        private ZoneLabelAlign _zoneLabelPos = ZoneLabelAlign.Right;
+        [Display(GroupName = "11. Gamma Zones", Name = "Zone label position", Order = 70)]
+        public ZoneLabelAlign ZoneLabelPosition
+        {
+            get => _zoneLabelPos;
+            set { _zoneLabelPos = value; RequestRecalc(); }
+        }
+        #endregion
+
         #region Constructor
         public GexBotClassicProfile()
         {
@@ -950,7 +1070,13 @@ namespace ATAS.Indicators.Technical
                 factor = _lastChartPrice / snapshot.Spot;
             }
 
-            // Draw strike grid first (behind everything)
+            // Draw gamma zones first (behind everything)
+            if (_showGammaZones && snapshot.ZeroGamma > 0)
+            {
+                DrawGammaZones(context, snapshot, factor, fullWidth);
+            }
+
+            // Draw strike grid (behind bars)
             DrawStrikeGrid(context, factor, fullWidth);
 
             // Convert strikes to chart price
@@ -1083,6 +1209,47 @@ namespace ATAS.Indicators.Technical
                         strikeX = xCenter - barWidth - sw - _valueOffsetPx - (_showValues ? 50 : 0);
                     }
                     context.DrawString(strikeText, valueFont, _strikeTextColor, strikeX, top);
+                }
+
+                // Draw direction arrow
+                if (_showDirectionArrows && strike.Priors.Length > 0)
+                {
+                    int periodIdx = _arrowTimePeriod switch
+                    {
+                        ArrowTimePeriod.OneMin => 0,
+                        ArrowTimePeriod.FiveMin => 1,
+                        ArrowTimePeriod.TenMin => 2,
+                        ArrowTimePeriod.FifteenMin => 3,
+                        ArrowTimePeriod.ThirtyMin => 4,
+                        _ => 1
+                    };
+
+                    if (strike.Priors.Length > periodIdx)
+                    {
+                        var priorGex = strike.Priors[periodIdx];
+                        var change = strike.GexValue - priorGex;
+
+                        if (Math.Abs(change) >= _arrowMinChange)
+                        {
+                            var arrowFont = new RenderFont("Arial", _arrowFontSize);
+                            var arrow = change > 0 ? "▲" : "▼";
+                            var arrowColor = change > 0 ? _arrowUpColor : _arrowDownColor;
+
+                            // Position arrow at the end of the bar
+                            int arrowX;
+                            if (isPositive)
+                            {
+                                arrowX = xCenter + barWidth + _arrowOffsetPx;
+                            }
+                            else
+                            {
+                                arrowX = xCenter - barWidth - _arrowFontSize - _arrowOffsetPx;
+                            }
+                            int arrowY = top + (_barThicknessPx - _arrowFontSize) / 2;
+
+                            context.DrawString(arrow, arrowFont, arrowColor, arrowX, arrowY);
+                        }
+                    }
                 }
             }
 
@@ -1515,6 +1682,62 @@ namespace ATAS.Indicators.Technical
                 }
 
                 strikeIndex++;
+            }
+        }
+
+        private void DrawGammaZones(RenderContext context, GexClassicData data, decimal factor, int fullWidth)
+        {
+            // Calculate the Zero Gamma price in chart coordinates
+            decimal zeroGammaPrice = _enableConversion ? RoundToStep(data.ZeroGamma * factor, _priceStep) : data.ZeroGamma;
+            int zeroGammaY = ChartInfo.PriceChartContainer.GetYByPrice(zeroGammaPrice, false);
+
+            int chartHeight = ChartInfo.Region.Height;
+
+            // Positive gamma zone is ABOVE the Zero Gamma line (price > ZG)
+            // In chart coordinates, Y=0 is at top, so above ZG means Y < zeroGammaY
+            var positiveZoneRect = new Rectangle(0, 0, fullWidth, zeroGammaY);
+            context.FillRectangle(_positiveZoneColor, positiveZoneRect);
+
+            // Negative gamma zone is BELOW the Zero Gamma line (price < ZG)
+            var negativeZoneRect = new Rectangle(0, zeroGammaY, fullWidth, chartHeight - zeroGammaY);
+            context.FillRectangle(_negativeZoneColor, negativeZoneRect);
+
+            // Draw zone boundary
+            if (_showZoneBoundary)
+            {
+                var boundaryPen = new RenderPen(_zoneBoundaryColor, 2);
+                context.DrawLine(boundaryPen, 0, zeroGammaY, fullWidth, zeroGammaY);
+            }
+
+            // Draw zone labels
+            if (_showZoneLabels)
+            {
+                var labelFont = new RenderFont("Arial", 10);
+
+                int labelX;
+                switch (_zoneLabelPos)
+                {
+                    case ZoneLabelAlign.Left:
+                        labelX = 10;
+                        break;
+                    case ZoneLabelAlign.Center:
+                        labelX = fullWidth / 2 - 50;
+                        break;
+                    case ZoneLabelAlign.Right:
+                    default:
+                        labelX = fullWidth - 120;
+                        break;
+                }
+
+                // Positive zone label (dealer long gamma = supportive)
+                var posLabel = "▲ POSITIVE GAMMA";
+                var posLabelY = Math.Max(20, zeroGammaY - 30);
+                context.DrawString(posLabel, labelFont, Color.FromArgb(120, _positiveGexColor), labelX, posLabelY);
+
+                // Negative zone label (dealer short gamma = volatile)
+                var negLabel = "▼ NEGATIVE GAMMA";
+                var negLabelY = Math.Min(chartHeight - 20, zeroGammaY + 15);
+                context.DrawString(negLabel, labelFont, Color.FromArgb(120, _negativeGexColor), labelX, negLabelY);
             }
         }
         #endregion
