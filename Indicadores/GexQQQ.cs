@@ -5,7 +5,9 @@ using System.ComponentModel.DataAnnotations;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Media;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -63,6 +65,16 @@ namespace ATAS.Indicators.Technical
             public bool IsIncrease { get; set; }
             public string TimePeriod { get; set; } = string.Empty;
         }
+
+        private class AlertHistoryEntry
+        {
+            public DateTime Timestamp { get; set; }
+            public decimal Strike { get; set; }
+            public decimal Change { get; set; }
+            public decimal ChangePercent { get; set; }
+            public bool IsIncrease { get; set; }
+            public string TimePeriod { get; set; } = string.Empty;
+        }
         #endregion
 
         #region Fields
@@ -74,7 +86,11 @@ namespace ATAS.Indicators.Technical
         private DateTime? _lastLoad;
         private decimal _lastChartPrice;
         private List<AlertInfo> _activeAlerts = new();
+        private List<AlertHistoryEntry> _alertHistory = new();
+        private HashSet<string> _alertHistoryKeys = new(); // To avoid duplicates
         private DateTime _lastPulseTime = DateTime.Now;
+        private int _totalStrikesCount;
+        private int _filteredStrikesCount;
         #endregion
 
         #region API Settings
@@ -508,6 +524,14 @@ namespace ATAS.Indicators.Technical
             get => _showInfoPanelBars;
             set { _showInfoPanelBars = value; RequestRecalc(); }
         }
+
+        private bool _compactMode = false;
+        [Display(GroupName = "7. Info Panel", Name = "Compact mode", Order = 95)]
+        public bool CompactMode
+        {
+            get => _compactMode;
+            set { _compactMode = value; RequestRecalc(); }
+        }
         #endregion
 
         #region Strike Grid
@@ -843,6 +867,1005 @@ namespace ATAS.Indicators.Technical
         }
         #endregion
 
+        #region Sparklines
+        private bool _showSparklines = false;
+        [Display(GroupName = "12. Sparklines", Name = "Show sparklines", Order = 10)]
+        public bool ShowSparklines
+        {
+            get => _showSparklines;
+            set { _showSparklines = value; RequestRecalc(); }
+        }
+
+        private int _sparklineWidth = 40;
+        [Display(GroupName = "12. Sparklines", Name = "Width (px)", Order = 20)]
+        [Range(20, 100)]
+        public int SparklineWidth
+        {
+            get => _sparklineWidth;
+            set { _sparklineWidth = Math.Clamp(value, 20, 100); RequestRecalc(); }
+        }
+
+        private int _sparklineHeight = 12;
+        [Display(GroupName = "12. Sparklines", Name = "Height (px)", Order = 30)]
+        [Range(6, 30)]
+        public int SparklineHeight
+        {
+            get => _sparklineHeight;
+            set { _sparklineHeight = Math.Clamp(value, 6, 30); RequestRecalc(); }
+        }
+
+        private int _sparklineOffsetPx = 5;
+        [Display(GroupName = "12. Sparklines", Name = "Offset from bar (px)", Order = 40)]
+        [Range(0, 50)]
+        public int SparklineOffsetPx
+        {
+            get => _sparklineOffsetPx;
+            set { _sparklineOffsetPx = Math.Clamp(value, 0, 50); RequestRecalc(); }
+        }
+
+        private Color _sparklineUpColor = Color.FromArgb(255, 0, 200, 120);
+        [Display(GroupName = "12. Sparklines", Name = "Uptrend color", Order = 50)]
+        public Color SparklineUpColor
+        {
+            get => _sparklineUpColor;
+            set { _sparklineUpColor = value; RequestRecalc(); }
+        }
+
+        private Color _sparklineDownColor = Color.FromArgb(255, 255, 80, 80);
+        [Display(GroupName = "12. Sparklines", Name = "Downtrend color", Order = 60)]
+        public Color SparklineDownColor
+        {
+            get => _sparklineDownColor;
+            set { _sparklineDownColor = value; RequestRecalc(); }
+        }
+
+        private Color _sparklineNeutralColor = Color.FromArgb(255, 150, 150, 150);
+        [Display(GroupName = "12. Sparklines", Name = "Neutral color", Order = 70)]
+        public Color SparklineNeutralColor
+        {
+            get => _sparklineNeutralColor;
+            set { _sparklineNeutralColor = value; RequestRecalc(); }
+        }
+
+        private int _sparklineThickness = 1;
+        [Display(GroupName = "12. Sparklines", Name = "Line thickness", Order = 80)]
+        [Range(1, 4)]
+        public int SparklineThickness
+        {
+            get => _sparklineThickness;
+            set { _sparklineThickness = Math.Clamp(value, 1, 4); RequestRecalc(); }
+        }
+
+        private bool _sparklineShowBackground = true;
+        [Display(GroupName = "12. Sparklines", Name = "Show background", Order = 90)]
+        public bool SparklineShowBackground
+        {
+            get => _sparklineShowBackground;
+            set { _sparklineShowBackground = value; RequestRecalc(); }
+        }
+
+        private Color _sparklineBackColor = Color.FromArgb(120, 30, 30, 35);
+        [Display(GroupName = "12. Sparklines", Name = "Background color", Order = 100)]
+        public Color SparklineBackColor
+        {
+            get => _sparklineBackColor;
+            set { _sparklineBackColor = value; RequestRecalc(); }
+        }
+
+        private bool _sparklineShowDots = true;
+        [Display(GroupName = "12. Sparklines", Name = "Show data points", Order = 110)]
+        public bool SparklineShowDots
+        {
+            get => _sparklineShowDots;
+            set { _sparklineShowDots = value; RequestRecalc(); }
+        }
+
+        private bool _sparklineShowZeroLine = true;
+        [Display(GroupName = "12. Sparklines", Name = "Show zero line", Order = 120)]
+        public bool SparklineShowZeroLine
+        {
+            get => _sparklineShowZeroLine;
+            set { _sparklineShowZeroLine = value; RequestRecalc(); }
+        }
+        #endregion
+
+        #region Alert History
+        private bool _enableAlertHistory = true;
+        [Display(GroupName = "13. Alert History", Name = "Enable alert history", Order = 10)]
+        public bool EnableAlertHistory
+        {
+            get => _enableAlertHistory;
+            set { _enableAlertHistory = value; RequestRecalc(); }
+        }
+
+        private int _alertHistoryMaxItems = 20;
+        [Display(GroupName = "13. Alert History", Name = "Max history items", Order = 20)]
+        [Range(5, 100)]
+        public int AlertHistoryMaxItems
+        {
+            get => _alertHistoryMaxItems;
+            set { _alertHistoryMaxItems = Math.Clamp(value, 5, 100); TrimAlertHistory(); RequestRecalc(); }
+        }
+
+        private bool _showAlertHistoryPanel = true;
+        [Display(GroupName = "13. Alert History", Name = "Show history panel", Order = 30)]
+        public bool ShowAlertHistoryPanel
+        {
+            get => _showAlertHistoryPanel;
+            set { _showAlertHistoryPanel = value; RequestRecalc(); }
+        }
+
+        private int _alertHistoryDisplayCount = 8;
+        [Display(GroupName = "13. Alert History", Name = "Display count in panel", Order = 40)]
+        [Range(3, 20)]
+        public int AlertHistoryDisplayCount
+        {
+            get => _alertHistoryDisplayCount;
+            set { _alertHistoryDisplayCount = Math.Clamp(value, 3, 20); RequestRecalc(); }
+        }
+
+        public enum HistoryPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
+        private HistoryPanelAlign _alertHistoryPosition = HistoryPanelAlign.BottomRight;
+        [Display(GroupName = "13. Alert History", Name = "Panel position", Order = 50)]
+        public HistoryPanelAlign AlertHistoryPosition
+        {
+            get => _alertHistoryPosition;
+            set { _alertHistoryPosition = value; RequestRecalc(); }
+        }
+
+        private int _alertHistoryPanelX = 10;
+        [Display(GroupName = "13. Alert History", Name = "Panel X offset", Order = 60)]
+        [Range(0, 5000)]
+        public int AlertHistoryPanelX
+        {
+            get => _alertHistoryPanelX;
+            set { _alertHistoryPanelX = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _alertHistoryPanelY = 10;
+        [Display(GroupName = "13. Alert History", Name = "Panel Y offset", Order = 70)]
+        [Range(0, 5000)]
+        public int AlertHistoryPanelY
+        {
+            get => _alertHistoryPanelY;
+            set { _alertHistoryPanelY = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private Color _alertHistoryBackColor = Color.FromArgb(220, 25, 20, 30);
+        [Display(GroupName = "13. Alert History", Name = "Background color", Order = 80)]
+        public Color AlertHistoryBackColor
+        {
+            get => _alertHistoryBackColor;
+            set { _alertHistoryBackColor = value; RequestRecalc(); }
+        }
+
+        private Color _alertHistoryBorderColor = Color.FromArgb(180, 80, 60, 70);
+        [Display(GroupName = "13. Alert History", Name = "Border color", Order = 85)]
+        public Color AlertHistoryBorderColor
+        {
+            get => _alertHistoryBorderColor;
+            set { _alertHistoryBorderColor = value; RequestRecalc(); }
+        }
+
+        private int _alertHistoryFontSize = 9;
+        [Display(GroupName = "13. Alert History", Name = "Font size", Order = 90)]
+        [Range(7, 14)]
+        public int AlertHistoryFontSize
+        {
+            get => _alertHistoryFontSize;
+            set { _alertHistoryFontSize = Math.Clamp(value, 7, 14); RequestRecalc(); }
+        }
+
+        private int _alertHistoryDuplicateWindowSec = 60;
+        [Display(GroupName = "13. Alert History", Name = "Duplicate filter (sec)", Order = 100)]
+        [Range(0, 300)]
+        public int AlertHistoryDuplicateWindowSec
+        {
+            get => _alertHistoryDuplicateWindowSec;
+            set { _alertHistoryDuplicateWindowSec = Math.Clamp(value, 0, 300); RequestRecalc(); }
+        }
+
+        private void TrimAlertHistory()
+        {
+            lock (_sync)
+            {
+                while (_alertHistory.Count > _alertHistoryMaxItems)
+                {
+                    var oldest = _alertHistory[^1];
+                    _alertHistory.RemoveAt(_alertHistory.Count - 1);
+                    _alertHistoryKeys.Remove(GetAlertKey(oldest));
+                }
+            }
+        }
+
+        private void ClearAlertHistory()
+        {
+            lock (_sync)
+            {
+                _alertHistory.Clear();
+                _alertHistoryKeys.Clear();
+            }
+        }
+
+        private string GetAlertKey(AlertHistoryEntry entry)
+        {
+            // Key based on strike + direction + minute (to avoid duplicates within same minute)
+            return $"{entry.Strike}_{entry.IsIncrease}_{entry.Timestamp:yyyyMMddHHmm}";
+        }
+        #endregion
+
+        #region Sound Alerts
+        private DateTime _lastSoundTime = DateTime.MinValue;
+        private SoundPlayer? _soundPlayer;
+
+        private bool _enableSoundAlerts = false;
+        [Display(GroupName = "14. Sound Alerts", Name = "Enable sound alerts", Order = 10)]
+        public bool EnableSoundAlerts
+        {
+            get => _enableSoundAlerts;
+            set { _enableSoundAlerts = value; RequestRecalc(); }
+        }
+
+        public enum SoundAlertType { SystemBeep, CustomWav }
+        private SoundAlertType _soundType = SoundAlertType.SystemBeep;
+        [Display(GroupName = "14. Sound Alerts", Name = "Sound type", Order = 20)]
+        public SoundAlertType SoundType
+        {
+            get => _soundType;
+            set { _soundType = value; InitializeSoundPlayer(); RequestRecalc(); }
+        }
+
+        private bool _soundOnIncrease = true;
+        [Display(GroupName = "14. Sound Alerts", Name = "Sound on GEX increase", Order = 30)]
+        public bool SoundOnIncrease
+        {
+            get => _soundOnIncrease;
+            set { _soundOnIncrease = value; RequestRecalc(); }
+        }
+
+        private bool _soundOnDecrease = true;
+        [Display(GroupName = "14. Sound Alerts", Name = "Sound on GEX decrease", Order = 40)]
+        public bool SoundOnDecrease
+        {
+            get => _soundOnDecrease;
+            set { _soundOnDecrease = value; RequestRecalc(); }
+        }
+
+        private int _beepFrequencyIncrease = 1200;
+        [Display(GroupName = "14. Sound Alerts", Name = "Beep frequency - increase (Hz)", Order = 50)]
+        [Range(200, 5000)]
+        public int BeepFrequencyIncrease
+        {
+            get => _beepFrequencyIncrease;
+            set { _beepFrequencyIncrease = Math.Clamp(value, 200, 5000); RequestRecalc(); }
+        }
+
+        private int _beepFrequencyDecrease = 600;
+        [Display(GroupName = "14. Sound Alerts", Name = "Beep frequency - decrease (Hz)", Order = 60)]
+        [Range(200, 5000)]
+        public int BeepFrequencyDecrease
+        {
+            get => _beepFrequencyDecrease;
+            set { _beepFrequencyDecrease = Math.Clamp(value, 200, 5000); RequestRecalc(); }
+        }
+
+        private int _beepDuration = 150;
+        [Display(GroupName = "14. Sound Alerts", Name = "Beep duration (ms)", Order = 70)]
+        [Range(50, 1000)]
+        public int BeepDuration
+        {
+            get => _beepDuration;
+            set { _beepDuration = Math.Clamp(value, 50, 1000); RequestRecalc(); }
+        }
+
+        private string _customWavPath = string.Empty;
+        [Display(GroupName = "14. Sound Alerts", Name = "Custom WAV file path", Order = 80)]
+        public string CustomWavPath
+        {
+            get => _customWavPath;
+            set { _customWavPath = value ?? string.Empty; InitializeSoundPlayer(); RequestRecalc(); }
+        }
+
+        private int _soundCooldownSec = 5;
+        [Display(GroupName = "14. Sound Alerts", Name = "Sound cooldown (sec)", Order = 90)]
+        [Range(0, 300)]
+        public int SoundCooldownSec
+        {
+            get => _soundCooldownSec;
+            set { _soundCooldownSec = Math.Clamp(value, 0, 300); RequestRecalc(); }
+        }
+
+        private int _soundRepeatCount = 1;
+        [Display(GroupName = "14. Sound Alerts", Name = "Repeat count (beeps)", Order = 100)]
+        [Range(1, 5)]
+        public int SoundRepeatCount
+        {
+            get => _soundRepeatCount;
+            set { _soundRepeatCount = Math.Clamp(value, 1, 5); RequestRecalc(); }
+        }
+
+        private bool _soundOnlyFirstAlert = true;
+        [Display(GroupName = "14. Sound Alerts", Name = "Sound only for first alert", Order = 110)]
+        public bool SoundOnlyFirstAlert
+        {
+            get => _soundOnlyFirstAlert;
+            set { _soundOnlyFirstAlert = value; RequestRecalc(); }
+        }
+
+        private void InitializeSoundPlayer()
+        {
+            try
+            {
+                _soundPlayer?.Dispose();
+                _soundPlayer = null;
+
+                if (_soundType == SoundAlertType.CustomWav && !string.IsNullOrWhiteSpace(_customWavPath))
+                {
+                    if (File.Exists(_customWavPath))
+                    {
+                        _soundPlayer = new SoundPlayer(_customWavPath);
+                        _soundPlayer.Load();
+                    }
+                }
+            }
+            catch
+            {
+                _soundPlayer = null;
+            }
+        }
+
+        private void PlayAlertSound(bool isIncrease)
+        {
+            if (!_enableSoundAlerts) return;
+
+            // Check cooldown
+            var now = DateTime.Now;
+            if (_soundCooldownSec > 0 && (now - _lastSoundTime).TotalSeconds < _soundCooldownSec)
+                return;
+
+            // Check if we should play for this direction
+            if (isIncrease && !_soundOnIncrease) return;
+            if (!isIncrease && !_soundOnDecrease) return;
+
+            _lastSoundTime = now;
+
+            // Play sound asynchronously to not block rendering
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (_soundType == SoundAlertType.CustomWav && _soundPlayer != null)
+                    {
+                        for (int i = 0; i < _soundRepeatCount; i++)
+                        {
+                            _soundPlayer.PlaySync();
+                            if (i < _soundRepeatCount - 1)
+                                System.Threading.Thread.Sleep(100);
+                        }
+                    }
+                    else
+                    {
+                        // System beep with different frequencies for increase/decrease
+                        int frequency = isIncrease ? _beepFrequencyIncrease : _beepFrequencyDecrease;
+                        for (int i = 0; i < _soundRepeatCount; i++)
+                        {
+                            Console.Beep(frequency, _beepDuration);
+                            if (i < _soundRepeatCount - 1)
+                                System.Threading.Thread.Sleep(50);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore sound errors
+                }
+            });
+        }
+
+        private void DisposeSoundPlayer()
+        {
+            try
+            {
+                _soundPlayer?.Dispose();
+                _soundPlayer = null;
+            }
+            catch { }
+        }
+        #endregion
+
+        #region Strike Range Filter
+        private bool _enableStrikeFilter = false;
+        [Display(GroupName = "15. Strike Filter", Name = "Enable strike filter", Order = 10)]
+        public bool EnableStrikeFilter
+        {
+            get => _enableStrikeFilter;
+            set { _enableStrikeFilter = value; RequestRecalc(); }
+        }
+
+        public enum StrikeFilterMode { PercentFromSpot, FixedRange, StrikeCount }
+        private StrikeFilterMode _strikeFilterMode = StrikeFilterMode.PercentFromSpot;
+        [Display(GroupName = "15. Strike Filter", Name = "Filter mode", Order = 20)]
+        public StrikeFilterMode FilterMode
+        {
+            get => _strikeFilterMode;
+            set { _strikeFilterMode = value; RequestRecalc(); }
+        }
+
+        private decimal _strikeFilterPercent = 5m;
+        [Display(GroupName = "15. Strike Filter", Name = "Range (% from spot)", Order = 30)]
+        [Range(0.5, 50)]
+        public decimal StrikeFilterPercent
+        {
+            get => _strikeFilterPercent;
+            set { _strikeFilterPercent = Math.Clamp(value, 0.5m, 50m); RequestRecalc(); }
+        }
+
+        private decimal _strikeFilterMinPrice = 0m;
+        [Display(GroupName = "15. Strike Filter", Name = "Min strike price (0=auto)", Order = 40)]
+        public decimal StrikeFilterMinPrice
+        {
+            get => _strikeFilterMinPrice;
+            set { _strikeFilterMinPrice = Math.Max(0, value); RequestRecalc(); }
+        }
+
+        private decimal _strikeFilterMaxPrice = 0m;
+        [Display(GroupName = "15. Strike Filter", Name = "Max strike price (0=auto)", Order = 50)]
+        public decimal StrikeFilterMaxPrice
+        {
+            get => _strikeFilterMaxPrice;
+            set { _strikeFilterMaxPrice = Math.Max(0, value); RequestRecalc(); }
+        }
+
+        private int _strikeFilterCount = 20;
+        [Display(GroupName = "15. Strike Filter", Name = "Max strikes to show", Order = 60)]
+        [Range(5, 100)]
+        public int StrikeFilterCount
+        {
+            get => _strikeFilterCount;
+            set { _strikeFilterCount = Math.Clamp(value, 5, 100); RequestRecalc(); }
+        }
+
+        private decimal _minGexThreshold = 0m;
+        [Display(GroupName = "15. Strike Filter", Name = "Min GEX value to show", Order = 70)]
+        public decimal MinGexThreshold
+        {
+            get => _minGexThreshold;
+            set { _minGexThreshold = Math.Max(0, value); RequestRecalc(); }
+        }
+
+        private bool _showSpotPriceLine = true;
+        [Display(GroupName = "15. Strike Filter", Name = "Show spot price line", Order = 80)]
+        public bool ShowSpotPriceLine
+        {
+            get => _showSpotPriceLine;
+            set { _showSpotPriceLine = value; RequestRecalc(); }
+        }
+
+        private Color _spotPriceLineColor = Color.FromArgb(200, 0, 180, 255);
+        [Display(GroupName = "15. Strike Filter", Name = "Spot line color", Order = 90)]
+        public Color SpotPriceLineColor
+        {
+            get => _spotPriceLineColor;
+            set { _spotPriceLineColor = value; RequestRecalc(); }
+        }
+
+        private int _spotPriceLineThickness = 2;
+        [Display(GroupName = "15. Strike Filter", Name = "Spot line thickness", Order = 100)]
+        [Range(1, 5)]
+        public int SpotPriceLineThickness
+        {
+            get => _spotPriceLineThickness;
+            set { _spotPriceLineThickness = Math.Clamp(value, 1, 5); RequestRecalc(); }
+        }
+
+        private DashStyle _spotPriceLineDash = DashStyle.Solid;
+        [Display(GroupName = "15. Strike Filter", Name = "Spot line dash style", Order = 110)]
+        public DashStyle SpotPriceLineDash
+        {
+            get => _spotPriceLineDash;
+            set { _spotPriceLineDash = value; RequestRecalc(); }
+        }
+
+        private bool _showSpotPriceLabel = true;
+        [Display(GroupName = "15. Strike Filter", Name = "Show spot price label", Order = 120)]
+        public bool ShowSpotPriceLabel
+        {
+            get => _showSpotPriceLabel;
+            set { _showSpotPriceLabel = value; RequestRecalc(); }
+        }
+
+        private bool _highlightNearSpotStrikes = true;
+        [Display(GroupName = "15. Strike Filter", Name = "Highlight strikes near spot", Order = 130)]
+        public bool HighlightNearSpotStrikes
+        {
+            get => _highlightNearSpotStrikes;
+            set { _highlightNearSpotStrikes = value; RequestRecalc(); }
+        }
+
+        private decimal _nearSpotRange = 1m;
+        [Display(GroupName = "15. Strike Filter", Name = "Near spot range (%)", Order = 140)]
+        [Range(0.1, 10)]
+        public decimal NearSpotRange
+        {
+            get => _nearSpotRange;
+            set { _nearSpotRange = Math.Clamp(value, 0.1m, 10m); RequestRecalc(); }
+        }
+
+        private Color _nearSpotHighlightColor = Color.FromArgb(100, 0, 200, 255);
+        [Display(GroupName = "15. Strike Filter", Name = "Near spot highlight color", Order = 150)]
+        public Color NearSpotHighlightColor
+        {
+            get => _nearSpotHighlightColor;
+            set { _nearSpotHighlightColor = value; RequestRecalc(); }
+        }
+
+        private bool _showFilteredCount = true;
+        [Display(GroupName = "15. Strike Filter", Name = "Show filtered count in panel", Order = 160)]
+        public bool ShowFilteredCount
+        {
+            get => _showFilteredCount;
+            set { _showFilteredCount = value; RequestRecalc(); }
+        }
+        #endregion
+
+        #region Multi-Timeframe Panel
+        private bool _showMultiTimeframePanel = false;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show MTF panel", Order = 10)]
+        public bool ShowMultiTimeframePanel
+        {
+            get => _showMultiTimeframePanel;
+            set { _showMultiTimeframePanel = value; RequestRecalc(); }
+        }
+
+        public enum MtfPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
+        private MtfPanelAlign _mtfPanelPosition = MtfPanelAlign.BottomLeft;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Panel position", Order = 20)]
+        public MtfPanelAlign MtfPanelPosition
+        {
+            get => _mtfPanelPosition;
+            set { _mtfPanelPosition = value; RequestRecalc(); }
+        }
+
+        private int _mtfPanelX = 10;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Panel X offset", Order = 30)]
+        [Range(0, 5000)]
+        public int MtfPanelX
+        {
+            get => _mtfPanelX;
+            set { _mtfPanelX = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _mtfPanelY = 10;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Panel Y offset", Order = 40)]
+        [Range(0, 5000)]
+        public int MtfPanelY
+        {
+            get => _mtfPanelY;
+            set { _mtfPanelY = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        private int _mtfPanelFontSize = 10;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Font size", Order = 50)]
+        [Range(8, 16)]
+        public int MtfPanelFontSize
+        {
+            get => _mtfPanelFontSize;
+            set { _mtfPanelFontSize = Math.Clamp(value, 8, 16); RequestRecalc(); }
+        }
+
+        private Color _mtfPanelBackColor = Color.FromArgb(220, 20, 25, 30);
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Background color", Order = 60)]
+        public Color MtfPanelBackColor
+        {
+            get => _mtfPanelBackColor;
+            set { _mtfPanelBackColor = value; RequestRecalc(); }
+        }
+
+        private Color _mtfPanelBorderColor = Color.FromArgb(180, 70, 70, 80);
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Border color", Order = 65)]
+        public Color MtfPanelBorderColor
+        {
+            get => _mtfPanelBorderColor;
+            set { _mtfPanelBorderColor = value; RequestRecalc(); }
+        }
+
+        private Color _mtfPanelHeaderColor = Color.FromArgb(255, 180, 100, 255);
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Header color", Order = 70)]
+        public Color MtfPanelHeaderColor
+        {
+            get => _mtfPanelHeaderColor;
+            set { _mtfPanelHeaderColor = value; RequestRecalc(); }
+        }
+
+        private bool _showMtfNetGex = true;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show net GEX change", Order = 80)]
+        public bool ShowMtfNetGex
+        {
+            get => _showMtfNetGex;
+            set { _showMtfNetGex = value; RequestRecalc(); }
+        }
+
+        private bool _showMtfTopStrikes = true;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show top movers", Order = 90)]
+        public bool ShowMtfTopStrikes
+        {
+            get => _showMtfTopStrikes;
+            set { _showMtfTopStrikes = value; RequestRecalc(); }
+        }
+
+        private int _mtfTopStrikesCount = 3;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Top movers count", Order = 100)]
+        [Range(1, 10)]
+        public int MtfTopStrikesCount
+        {
+            get => _mtfTopStrikesCount;
+            set { _mtfTopStrikesCount = Math.Clamp(value, 1, 10); RequestRecalc(); }
+        }
+
+        private bool _showMtfTrendBars = true;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show trend bars", Order = 110)]
+        public bool ShowMtfTrendBars
+        {
+            get => _showMtfTrendBars;
+            set { _showMtfTrendBars = value; RequestRecalc(); }
+        }
+
+        private int _mtfTrendBarWidth = 60;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Trend bar width", Order = 120)]
+        [Range(30, 150)]
+        public int MtfTrendBarWidth
+        {
+            get => _mtfTrendBarWidth;
+            set { _mtfTrendBarWidth = Math.Clamp(value, 30, 150); RequestRecalc(); }
+        }
+
+        private Color _mtfPositiveColor = Color.FromArgb(255, 0, 200, 100);
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Positive change color", Order = 130)]
+        public Color MtfPositiveColor
+        {
+            get => _mtfPositiveColor;
+            set { _mtfPositiveColor = value; RequestRecalc(); }
+        }
+
+        private Color _mtfNegativeColor = Color.FromArgb(255, 220, 80, 80);
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Negative change color", Order = 140)]
+        public Color MtfNegativeColor
+        {
+            get => _mtfNegativeColor;
+            set { _mtfNegativeColor = value; RequestRecalc(); }
+        }
+
+        private bool _showMtfPercentChange = true;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show % change", Order = 150)]
+        public bool ShowMtfPercentChange
+        {
+            get => _showMtfPercentChange;
+            set { _showMtfPercentChange = value; RequestRecalc(); }
+        }
+
+        private bool _mtfCompactMode = false;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Compact mode", Order = 160)]
+        public bool MtfCompactMode
+        {
+            get => _mtfCompactMode;
+            set { _mtfCompactMode = value; RequestRecalc(); }
+        }
+
+        private bool _showMtfHeatmap = true;
+        [Display(GroupName = "16. Multi-Timeframe Panel", Name = "Show heatmap colors", Order = 170)]
+        public bool ShowMtfHeatmap
+        {
+            get => _showMtfHeatmap;
+            set { _showMtfHeatmap = value; RequestRecalc(); }
+        }
+        #endregion
+
+        #region Data Export
+        private bool _enableDataExport = false;
+        [Display(GroupName = "17. Data Export", Name = "Enable data export", Order = 10)]
+        public bool EnableDataExport
+        {
+            get => _enableDataExport;
+            set { _enableDataExport = value; RequestRecalc(); }
+        }
+
+        private string _exportDirectory = string.Empty;
+        [Display(GroupName = "17. Data Export", Name = "Export directory (empty=Desktop)", Order = 20)]
+        public string ExportDirectory
+        {
+            get => _exportDirectory;
+            set { _exportDirectory = value ?? string.Empty; RequestRecalc(); }
+        }
+
+        private string _exportFilePrefix = "GexBot";
+        [Display(GroupName = "17. Data Export", Name = "File name prefix", Order = 30)]
+        public string ExportFilePrefix
+        {
+            get => _exportFilePrefix;
+            set { _exportFilePrefix = string.IsNullOrWhiteSpace(value) ? "GexBot" : value; RequestRecalc(); }
+        }
+
+        public enum ExportFormat { CSV, TXT }
+        private ExportFormat _exportFormat = ExportFormat.CSV;
+        [Display(GroupName = "17. Data Export", Name = "Export format", Order = 40)]
+        public ExportFormat DataExportFormat
+        {
+            get => _exportFormat;
+            set { _exportFormat = value; RequestRecalc(); }
+        }
+
+        private bool _exportOnRefresh = false;
+        [Display(GroupName = "17. Data Export", Name = "Auto-export on refresh", Order = 50)]
+        public bool ExportOnRefresh
+        {
+            get => _exportOnRefresh;
+            set { _exportOnRefresh = value; RequestRecalc(); }
+        }
+
+        private bool _exportIncludeTimestamp = true;
+        [Display(GroupName = "17. Data Export", Name = "Include timestamp in filename", Order = 60)]
+        public bool ExportIncludeTimestamp
+        {
+            get => _exportIncludeTimestamp;
+            set { _exportIncludeTimestamp = value; RequestRecalc(); }
+        }
+
+        private bool _exportIncludePriors = true;
+        [Display(GroupName = "17. Data Export", Name = "Include priors data", Order = 70)]
+        public bool ExportIncludePriors
+        {
+            get => _exportIncludePriors;
+            set { _exportIncludePriors = value; RequestRecalc(); }
+        }
+
+        private bool _exportIncludeAlerts = true;
+        [Display(GroupName = "17. Data Export", Name = "Include active alerts", Order = 80)]
+        public bool ExportIncludeAlerts
+        {
+            get => _exportIncludeAlerts;
+            set { _exportIncludeAlerts = value; RequestRecalc(); }
+        }
+
+        private bool _exportAppendMode = false;
+        [Display(GroupName = "17. Data Export", Name = "Append to existing file", Order = 90)]
+        public bool ExportAppendMode
+        {
+            get => _exportAppendMode;
+            set { _exportAppendMode = value; RequestRecalc(); }
+        }
+
+        private int _exportMaxFileSizeMB = 50;
+        [Display(GroupName = "17. Data Export", Name = "Max file size (MB)", Order = 100)]
+        [Range(1, 500)]
+        public int ExportMaxFileSizeMB
+        {
+            get => _exportMaxFileSizeMB;
+            set { _exportMaxFileSizeMB = Math.Clamp(value, 1, 500); RequestRecalc(); }
+        }
+
+        private bool _showExportStatus = true;
+        [Display(GroupName = "17. Data Export", Name = "Show export status on chart", Order = 110)]
+        public bool ShowExportStatus
+        {
+            get => _showExportStatus;
+            set { _showExportStatus = value; RequestRecalc(); }
+        }
+
+        private DateTime? _lastExportTime;
+        private string _lastExportFile = string.Empty;
+        private string _lastExportError = string.Empty;
+        private int _exportCount;
+
+        private string GetExportDirectory()
+        {
+            if (!string.IsNullOrWhiteSpace(_exportDirectory) && Directory.Exists(_exportDirectory))
+            {
+                return _exportDirectory;
+            }
+            return Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        }
+
+        private string GetExportFilePath()
+        {
+            var dir = GetExportDirectory();
+            var ticker = GetTickerString();
+            var ext = _exportFormat == ExportFormat.CSV ? "csv" : "txt";
+
+            string fileName;
+            if (_exportIncludeTimestamp)
+            {
+                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                fileName = $"{_exportFilePrefix}_{ticker}_{timestamp}.{ext}";
+            }
+            else
+            {
+                fileName = $"{_exportFilePrefix}_{ticker}.{ext}";
+            }
+
+            return Path.Combine(dir, fileName);
+        }
+
+        private void ExportData(GexClassicData data)
+        {
+            if (!_enableDataExport || data == null) return;
+
+            try
+            {
+                var filePath = GetExportFilePath();
+
+                // Check if appending to existing file
+                if (_exportAppendMode && !_exportIncludeTimestamp)
+                {
+                    // Check file size limit
+                    if (File.Exists(filePath))
+                    {
+                        var fileInfo = new FileInfo(filePath);
+                        if (fileInfo.Length > _exportMaxFileSizeMB * 1024 * 1024)
+                        {
+                            // Rotate file - add timestamp
+                            var dir = Path.GetDirectoryName(filePath) ?? GetExportDirectory();
+                            var name = Path.GetFileNameWithoutExtension(filePath);
+                            var ext = Path.GetExtension(filePath);
+                            var rotatedPath = Path.Combine(dir, $"{name}_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
+                            File.Move(filePath, rotatedPath);
+                        }
+                    }
+                }
+
+                var sb = new System.Text.StringBuilder();
+                var separator = _exportFormat == ExportFormat.CSV ? "," : "\t";
+
+                // Header (only for new files or non-append mode)
+                bool writeHeader = !_exportAppendMode || !File.Exists(filePath);
+
+                if (writeHeader)
+                {
+                    var headers = new List<string>
+                    {
+                        "ExportTime", "Ticker", "Spot", "ZeroGamma",
+                        "MajorPosVol", "MajorNegVol", "MajorPosOI", "MajorNegOI",
+                        "SumGexVol", "SumGexOI", "MinDTE", "SecMinDTE"
+                    };
+                    sb.AppendLine(string.Join(separator, headers));
+
+                    // Strike headers
+                    var strikeHeaders = new List<string> { "Strike", "GexByVolume", "GexByOI" };
+                    if (_exportIncludePriors)
+                    {
+                        strikeHeaders.AddRange(new[] { "Prior1Min", "Prior5Min", "Prior10Min", "Prior15Min", "Prior30Min" });
+                    }
+                    sb.AppendLine("--- STRIKES ---");
+                    sb.AppendLine(string.Join(separator, strikeHeaders));
+                }
+
+                // Summary row
+                var summaryRow = new List<string>
+                {
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    data.Ticker,
+                    data.Spot.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.ZeroGamma.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.MajorPosVol.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.MajorNegVol.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.MajorPosOI.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.MajorNegOI.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.SumGexVol.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.SumGexOI.ToString("0.00", CultureInfo.InvariantCulture),
+                    data.MinDte.ToString(),
+                    data.SecMinDte.ToString()
+                };
+                sb.AppendLine(string.Join(separator, summaryRow));
+                sb.AppendLine();
+
+                // Strike data
+                foreach (var strike in data.Strikes)
+                {
+                    var strikeRow = new List<string>
+                    {
+                        strike.Strike.ToString("0", CultureInfo.InvariantCulture),
+                        strike.GexByVolume.ToString("0.00", CultureInfo.InvariantCulture),
+                        strike.GexByOI.ToString("0.00", CultureInfo.InvariantCulture)
+                    };
+
+                    if (_exportIncludePriors)
+                    {
+                        for (int i = 0; i < 5; i++)
+                        {
+                            var priorVal = strike.Priors.Length > i ? strike.Priors[i] : 0m;
+                            strikeRow.Add(priorVal.ToString("0.00", CultureInfo.InvariantCulture));
+                        }
+                    }
+
+                    sb.AppendLine(string.Join(separator, strikeRow));
+                }
+
+                // Export alerts if enabled
+                if (_exportIncludeAlerts && _activeAlerts.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("--- ACTIVE ALERTS ---");
+                    sb.AppendLine(string.Join(separator, new[] { "Strike", "Change", "ChangePercent", "Direction", "Period" }));
+
+                    foreach (var alert in _activeAlerts)
+                    {
+                        var alertRow = new List<string>
+                        {
+                            alert.Strike.ToString("0", CultureInfo.InvariantCulture),
+                            alert.Change.ToString("0.00", CultureInfo.InvariantCulture),
+                            alert.ChangePercent.ToString("0.00", CultureInfo.InvariantCulture),
+                            alert.IsIncrease ? "UP" : "DOWN",
+                            alert.TimePeriod
+                        };
+                        sb.AppendLine(string.Join(separator, alertRow));
+                    }
+                }
+
+                // Write to file
+                if (_exportAppendMode && File.Exists(filePath))
+                {
+                    File.AppendAllText(filePath, sb.ToString());
+                }
+                else
+                {
+                    File.WriteAllText(filePath, sb.ToString());
+                }
+
+                _lastExportTime = DateTime.Now;
+                _lastExportFile = filePath;
+                _lastExportError = string.Empty;
+                _exportCount++;
+            }
+            catch (Exception ex)
+            {
+                _lastExportError = ex.Message;
+            }
+        }
+
+        private void DrawExportStatus(RenderContext context)
+        {
+            if (!_enableDataExport || !_showExportStatus) return;
+
+            var font = new RenderFont("Arial", 9);
+            var fontSmall = new RenderFont("Arial", 8);
+            int panelWidth = 180;
+            int panelHeight = 50;
+            int x = 10;
+            int y = ChartInfo.Region.Height - panelHeight - 10;
+
+            // Background
+            var bgRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(Color.FromArgb(200, 30, 30, 35), bgRect);
+            context.DrawRectangle(new RenderPen(Color.FromArgb(150, 80, 80, 90), 1), bgRect);
+
+            int ty = y + 5;
+            int labelX = x + 8;
+
+            // Header
+            var headerColor = !string.IsNullOrEmpty(_lastExportError) ? Color.OrangeRed : Color.FromArgb(255, 100, 200, 255);
+            context.DrawString("📁 Data Export", font, headerColor, labelX, ty);
+            ty += 14;
+
+            // Status
+            if (!string.IsNullOrEmpty(_lastExportError))
+            {
+                context.DrawString($"Error: {_lastExportError}", fontSmall, Color.OrangeRed, labelX, ty);
+            }
+            else if (_lastExportTime.HasValue)
+            {
+                var elapsed = (DateTime.Now - _lastExportTime.Value).TotalSeconds;
+                var statusText = elapsed < 5 ? "✓ Exported" : $"Last: {_lastExportTime.Value:HH:mm:ss}";
+                var statusColor = elapsed < 5 ? Color.LimeGreen : Color.Gray;
+                context.DrawString(statusText, fontSmall, statusColor, labelX, ty);
+                ty += 12;
+                context.DrawString($"Count: {_exportCount}", fontSmall, Color.DimGray, labelX, ty);
+            }
+            else
+            {
+                context.DrawString("Ready", fontSmall, Color.Gray, labelX, ty);
+            }
+        }
+        #endregion
+
         #region Constructor
         public GexBotClassicProfile()
         {
@@ -878,6 +1901,7 @@ namespace ATAS.Indicators.Technical
                 _refreshTimer.Stop();
                 _refreshTimer.Dispose();
                 _httpClient.Dispose();
+                DisposeSoundPlayer();
             }
             catch { }
             base.OnDispose();
@@ -951,6 +1975,12 @@ namespace ATAS.Indicators.Technical
                     _data = parsed;
                     _error = string.Empty;
                     _lastLoad = DateTime.Now;
+                }
+
+                // Auto-export if enabled
+                if (_enableDataExport && _exportOnRefresh && parsed != null)
+                {
+                    ExportData(parsed);
                 }
 
                 RedrawChart();
@@ -1088,6 +2118,20 @@ namespace ATAS.Indicators.Technical
                 s.Priors
             }).ToList();
 
+            // Apply strike filter if enabled
+            _totalStrikesCount = convertedStrikes.Count;
+            if (_enableStrikeFilter)
+            {
+                convertedStrikes = ApplyStrikeFilter(convertedStrikes, snapshot.Spot);
+            }
+            _filteredStrikesCount = convertedStrikes.Count;
+
+            // Draw spot price line
+            if (_showSpotPriceLine && snapshot.Spot > 0)
+            {
+                DrawSpotPriceLine(context, snapshot.Spot, factor, fullWidth);
+            }
+
             // Detect alerts for unusual gamma changes
             var alertedStrikes = new HashSet<decimal>();
             if (_enableAlerts)
@@ -1140,6 +2184,9 @@ namespace ATAS.Indicators.Technical
                 var barColor = isPositive ? _positiveGexColor : _negativeGexColor;
                 var fillColor = Color.FromArgb(_fillOpacity, barColor);
 
+                // Check if this strike is near spot price
+                bool isNearSpot = IsStrikeNearSpot(strike.OriginalStrike, snapshot.Spot);
+
                 // Check if this strike has an alert
                 var alertInfo = _activeAlerts.FirstOrDefault(a => a.Strike == strike.OriginalStrike);
                 bool hasAlert = alertInfo != null;
@@ -1154,6 +2201,13 @@ namespace ATAS.Indicators.Technical
                 {
                     // Negative GEX: draw to the left
                     barRect = new Rectangle(xCenter - barWidth, top, barWidth, _barThicknessPx);
+                }
+
+                // Draw near-spot highlight background
+                if (isNearSpot)
+                {
+                    var highlightRect = new Rectangle(0, top - 1, fullWidth, _barThicknessPx + 2);
+                    context.FillRectangle(_nearSpotHighlightColor, highlightRect);
                 }
 
                 context.FillRectangle(fillColor, barRect);
@@ -1251,6 +2305,34 @@ namespace ATAS.Indicators.Technical
                         }
                     }
                 }
+
+                // Draw sparkline (mini trend chart)
+                if (_showSparklines && strike.Priors.Length >= 2)
+                {
+                    // Build data points: current + priors (reversed so oldest is first)
+                    var dataPoints = new List<decimal> { strike.GexValue };
+                    dataPoints.AddRange(strike.Priors.Take(5));
+                    dataPoints.Reverse(); // Now: oldest → newest (left → right)
+
+                    // Calculate sparkline position (after the bar, offset by labels/arrows)
+                    int sparkX;
+                    int labelOffset = 0;
+                    if (_showValues) labelOffset += 55;
+                    if (_showStrikeLabels) labelOffset += 45;
+                    if (_showDirectionArrows) labelOffset += _arrowFontSize + 5;
+
+                    if (isPositive)
+                    {
+                        sparkX = xCenter + barWidth + _sparklineOffsetPx + labelOffset;
+                    }
+                    else
+                    {
+                        sparkX = xCenter - barWidth - _sparklineWidth - _sparklineOffsetPx - labelOffset;
+                    }
+
+                    int sparkY = top + (_barThicknessPx - _sparklineHeight) / 2;
+                    DrawSparkline(context, sparkX, sparkY, dataPoints);
+                }
             }
 
             // Draw major levels
@@ -1261,6 +2343,21 @@ namespace ATAS.Indicators.Technical
             {
                 DrawInfoPanel(context, snapshot, lastLoad);
             }
+
+            // Draw alert history panel
+            if (_enableAlertHistory && _showAlertHistoryPanel && _alertHistory.Count > 0)
+            {
+                DrawAlertHistoryPanel(context);
+            }
+
+            // Draw multi-timeframe comparison panel
+            if (_showMultiTimeframePanel)
+            {
+                DrawMultiTimeframePanel(context, snapshot);
+            }
+
+            // Draw export status
+            DrawExportStatus(context);
         }
 
         private void DrawMajorLevels(RenderContext context, GexClassicData data, decimal factor, int fullWidth)
@@ -1320,6 +2417,13 @@ namespace ATAS.Indicators.Technical
 
         private void DrawInfoPanel(RenderContext context, GexClassicData data, DateTime? lastLoad)
         {
+            // Use compact mode if enabled
+            if (_compactMode)
+            {
+                DrawInfoPanelCompact(context, data, lastLoad);
+                return;
+            }
+
             var font = new RenderFont("Arial", _infoPanelFontSize);
             var fontBold = new RenderFont("Arial", _infoPanelFontSize + 1);
             var fontSmall = new RenderFont("Arial", _infoPanelFontSize - 1);
@@ -1584,6 +2688,466 @@ namespace ATAS.Indicators.Technical
             }
         }
 
+        private void DrawInfoPanelCompact(RenderContext context, GexClassicData data, DateTime? lastLoad)
+        {
+            var font = new RenderFont("Arial", _infoPanelFontSize);
+            var fontBold = new RenderFont("Arial", _infoPanelFontSize + 2);
+            var fontSmall = new RenderFont("Arial", _infoPanelFontSize - 1);
+            var lineHeight = _infoPanelFontSize + 5;
+
+            // Compact panel dimensions - add extra row if filter or alerts are shown
+            int panelWidth = 160;
+            int extraRows = 0;
+            if (_enableAlerts && _activeAlerts.Count > 0) extraRows++;
+            if (_enableStrikeFilter && _showFilteredCount) extraRows++;
+            int panelHeight = lineHeight * (5 + extraRows) + 20;
+
+            // Calculate position based on alignment
+            int x, y;
+            switch (_infoPanelPosition)
+            {
+                case InfoPanelAlign.TopRight:
+                    x = ChartInfo.Region.Width - panelWidth - _infoPanelX;
+                    y = _infoPanelY;
+                    break;
+                case InfoPanelAlign.BottomLeft:
+                    x = _infoPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _infoPanelY;
+                    break;
+                case InfoPanelAlign.BottomRight:
+                    x = ChartInfo.Region.Width - panelWidth - _infoPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _infoPanelY;
+                    break;
+                case InfoPanelAlign.TopLeft:
+                default:
+                    x = _infoPanelX;
+                    y = _infoPanelY;
+                    break;
+            }
+
+            // Draw background
+            var backRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(_infoPanelBackColor, backRect);
+            context.DrawRectangle(new RenderPen(_infoPanelBorderColor, 1), backRect);
+
+            int ty = y + 6;
+            int labelX = x + 8;
+            int valueX = x + 70;
+
+            // Header: Ticker + DTE badge
+            var tickerText = data.Ticker;
+            context.DrawString(tickerText, fontBold, _infoPanelHeaderColor, labelX, ty);
+
+            // DTE badge inline
+            var dteText = data.MinDte == 0 ? "0DTE" : $"{data.MinDte}DTE";
+            var dteColor = data.MinDte == 0 ? Color.Gold : Color.LightGray;
+            int dteX = x + panelWidth - 45;
+            if (data.MinDte == 0)
+            {
+                var badgeRect = new Rectangle(dteX - 3, ty - 1, 40, lineHeight - 2);
+                context.FillRectangle(Color.FromArgb(80, Color.Gold), badgeRect);
+            }
+            context.DrawString(dteText, fontSmall, dteColor, dteX, ty + 2);
+            ty += lineHeight + 2;
+
+            // Spot
+            context.DrawString("spot", font, Color.Gray, labelX, ty);
+            context.DrawString($"{data.Spot:0.00}", font, _infoPanelAccentPositive, valueX, ty);
+            ty += lineHeight;
+
+            // Zero Gamma
+            context.DrawString("zero γ", font, _zeroGammaColor, labelX, ty);
+            context.DrawString($"{data.ZeroGamma:0.00}", font, _zeroGammaColor, valueX, ty);
+            ty += lineHeight;
+
+            // Net GEX (based on data source)
+            var netGex = _dataSource == GexDataSource.Volume ? data.SumGexVol : data.SumGexOI;
+            var gexColor = netGex >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
+            var gexLabel = _dataSource == GexDataSource.Volume ? "net γ vol" : "net γ oi";
+            context.DrawString(gexLabel, font, Color.Gray, labelX, ty);
+            context.DrawString(FormatCompact(netGex), font, gexColor, valueX, ty);
+            ty += lineHeight;
+
+            // Alerts count (if any)
+            if (_enableAlerts && _activeAlerts.Count > 0)
+            {
+                var alertColor = Color.FromArgb(255, 255, 150, 50);
+                context.DrawString("alerts", font, alertColor, labelX, ty);
+                context.DrawString($"⚠ {_activeAlerts.Count}", font, alertColor, valueX, ty);
+                ty += lineHeight;
+            }
+
+            // Filtered strikes count (if filter enabled)
+            if (_enableStrikeFilter && _showFilteredCount)
+            {
+                context.DrawString("strikes", font, Color.Gray, labelX, ty);
+                context.DrawString($"{_filteredStrikesCount}/{_totalStrikesCount}", font, _spotPriceLineColor, valueX, ty);
+                ty += lineHeight;
+            }
+
+            // Last update time (small, at bottom)
+            ty += 2;
+            var timeStr = lastLoad.HasValue ? lastLoad.Value.ToString("HH:mm:ss") : "-";
+            context.DrawString(timeStr, fontSmall, Color.DimGray, labelX, ty);
+        }
+
+        private void DrawAlertHistoryPanel(RenderContext context)
+        {
+            List<AlertHistoryEntry> historySnapshot;
+            lock (_sync)
+            {
+                historySnapshot = _alertHistory.Take(_alertHistoryDisplayCount).ToList();
+            }
+
+            if (historySnapshot.Count == 0) return;
+
+            var font = new RenderFont("Arial", _alertHistoryFontSize);
+            var fontBold = new RenderFont("Arial", _alertHistoryFontSize + 1);
+            var fontSmall = new RenderFont("Arial", _alertHistoryFontSize - 1);
+            var lineHeight = _alertHistoryFontSize + 4;
+
+            // Panel dimensions
+            int panelWidth = 200;
+            int headerHeight = lineHeight + 6;
+            int panelHeight = headerHeight + (lineHeight * historySnapshot.Count) + 12;
+
+            // Calculate position based on alignment
+            int x, y;
+            switch (_alertHistoryPosition)
+            {
+                case HistoryPanelAlign.TopRight:
+                    x = ChartInfo.Region.Width - panelWidth - _alertHistoryPanelX;
+                    y = _alertHistoryPanelY;
+                    break;
+                case HistoryPanelAlign.BottomLeft:
+                    x = _alertHistoryPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _alertHistoryPanelY;
+                    break;
+                case HistoryPanelAlign.BottomRight:
+                    x = ChartInfo.Region.Width - panelWidth - _alertHistoryPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _alertHistoryPanelY;
+                    break;
+                case HistoryPanelAlign.TopLeft:
+                default:
+                    x = _alertHistoryPanelX;
+                    y = _alertHistoryPanelY;
+                    break;
+            }
+
+            // Draw background
+            var backRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(_alertHistoryBackColor, backRect);
+            context.DrawRectangle(new RenderPen(_alertHistoryBorderColor, 1), backRect);
+
+            int ty = y + 4;
+            int labelX = x + 8;
+
+            // Header
+            var headerColor = Color.FromArgb(255, 255, 180, 80);
+            var headerRect = new Rectangle(x, ty - 2, panelWidth, headerHeight);
+            context.FillRectangle(Color.FromArgb(40, headerColor), headerRect);
+            context.DrawString($"📋 Alert History ({_alertHistory.Count})", fontBold, headerColor, labelX, ty);
+            ty += headerHeight + 2;
+
+            // Column positions
+            int timeCol = labelX;
+            int strikeCol = x + 55;
+            int changeCol = x + 105;
+            int pctCol = x + 155;
+
+            // Draw each history entry
+            foreach (var entry in historySnapshot)
+            {
+                var alertColor = entry.IsIncrease ? _alertIncreaseColor : _alertDecreaseColor;
+                var arrow = entry.IsIncrease ? "▲" : "▼";
+
+                // Time
+                var entryTime = entry.Timestamp.ToString("HH:mm:ss");
+                context.DrawString(entryTime, fontSmall, Color.Gray, timeCol, ty);
+
+                // Strike with arrow
+                context.DrawString($"{arrow}{entry.Strike:0}", font, alertColor, strikeCol, ty);
+
+                // Change value
+                context.DrawString(FormatCompact(entry.Change), font, alertColor, changeCol, ty);
+
+                // Percentage (compact)
+                var pctText = $"{(entry.ChangePercent >= 0 ? "+" : "")}{entry.ChangePercent:0}%";
+                context.DrawString(pctText, fontSmall, alertColor, pctCol, ty);
+
+                ty += lineHeight;
+            }
+
+            // Show if there are more items
+            if (_alertHistory.Count > _alertHistoryDisplayCount)
+            {
+                var moreText = $"...+{_alertHistory.Count - _alertHistoryDisplayCount} more";
+                context.DrawString(moreText, fontSmall, Color.DimGray, labelX, ty);
+            }
+        }
+
+        private void DrawMultiTimeframePanel(RenderContext context, GexClassicData data)
+        {
+            if (!_showMultiTimeframePanel || data.Strikes.Count == 0) return;
+
+            // Check if any strike has priors data
+            bool hasPriors = data.Strikes.Any(s => s.Priors.Length > 0);
+            if (!hasPriors) return;
+
+            var font = new RenderFont("Arial", _mtfPanelFontSize);
+            var fontBold = new RenderFont("Arial", _mtfPanelFontSize + 1);
+            var fontSmall = new RenderFont("Arial", _mtfPanelFontSize - 1);
+            var lineHeight = _mtfPanelFontSize + 5;
+            var sectionGap = 6;
+
+            // Period labels and indices
+            string[] periodLabels = { "1 min", "5 min", "10 min", "15 min", "30 min" };
+            int periodCount = 5;
+
+            // Calculate panel dimensions based on content
+            int panelWidth = _mtfCompactMode ? 180 : (_showMtfTrendBars ? 320 : 260);
+            int headerHeight = lineHeight + 4;
+
+            // Calculate content rows
+            int netGexRows = _showMtfNetGex ? periodCount : 0;
+            int topStrikesRows = _showMtfTopStrikes ? (_mtfCompactMode ? periodCount : periodCount * (_mtfTopStrikesCount + 1)) : 0;
+            int separatorRows = (_showMtfNetGex && _showMtfTopStrikes) ? 1 : 0;
+
+            int totalRows = netGexRows + topStrikesRows + separatorRows;
+            int panelHeight = headerHeight + (lineHeight * totalRows) + sectionGap * 3 + 15;
+
+            // Calculate position based on alignment
+            int x, y;
+            switch (_mtfPanelPosition)
+            {
+                case MtfPanelAlign.TopRight:
+                    x = ChartInfo.Region.Width - panelWidth - _mtfPanelX;
+                    y = _mtfPanelY;
+                    break;
+                case MtfPanelAlign.BottomLeft:
+                    x = _mtfPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _mtfPanelY;
+                    break;
+                case MtfPanelAlign.BottomRight:
+                    x = ChartInfo.Region.Width - panelWidth - _mtfPanelX;
+                    y = ChartInfo.Region.Height - panelHeight - _mtfPanelY;
+                    break;
+                case MtfPanelAlign.TopLeft:
+                default:
+                    x = _mtfPanelX;
+                    y = _mtfPanelY;
+                    break;
+            }
+
+            // Draw background
+            var backRect = new Rectangle(x, y, panelWidth, panelHeight);
+            context.FillRectangle(_mtfPanelBackColor, backRect);
+            context.DrawRectangle(new RenderPen(_mtfPanelBorderColor, 1), backRect);
+
+            int ty = y + 4;
+            int labelX = x + 10;
+
+            // Header
+            var headerRect = new Rectangle(x, ty - 2, panelWidth, headerHeight);
+            context.FillRectangle(Color.FromArgb(40, _mtfPanelHeaderColor), headerRect);
+            context.DrawString("⏱ Multi-Timeframe GEX", fontBold, _mtfPanelHeaderColor, labelX, ty);
+            ty += headerHeight + sectionGap;
+
+            // Calculate GEX changes for all periods
+            var periodChanges = new List<(int Period, decimal NetChange, decimal NetChangePercent, List<(decimal Strike, decimal Change, decimal Pct)> TopMovers)>();
+
+            for (int periodIdx = 0; periodIdx < periodCount; periodIdx++)
+            {
+                decimal totalCurrentGex = 0;
+                decimal totalPriorGex = 0;
+                var strikeChanges = new List<(decimal Strike, decimal Change, decimal Pct)>();
+
+                foreach (var strike in data.Strikes)
+                {
+                    if (strike.Priors.Length <= periodIdx) continue;
+
+                    var currentGex = _dataSource == GexDataSource.Volume ? strike.GexByVolume : strike.GexByOI;
+                    var priorGex = strike.Priors[periodIdx];
+                    var change = currentGex - priorGex;
+
+                    totalCurrentGex += currentGex;
+                    totalPriorGex += priorGex;
+
+                    decimal pct = priorGex != 0 ? (change / Math.Abs(priorGex)) * 100m : (currentGex != 0 ? 100m : 0m);
+                    strikeChanges.Add((strike.Strike, change, pct));
+                }
+
+                decimal netChange = totalCurrentGex - totalPriorGex;
+                decimal netPct = totalPriorGex != 0 ? (netChange / Math.Abs(totalPriorGex)) * 100m : 0m;
+
+                // Get top movers (sorted by absolute change)
+                var topMovers = strikeChanges
+                    .OrderByDescending(sc => Math.Abs(sc.Change))
+                    .Take(_mtfTopStrikesCount)
+                    .ToList();
+
+                periodChanges.Add((periodIdx, netChange, netPct, topMovers));
+            }
+
+            // Find max absolute change for heatmap scaling
+            decimal maxAbsChange = periodChanges.Max(p => Math.Abs(p.NetChange));
+            if (maxAbsChange <= 0) maxAbsChange = 1;
+
+            // Column positions
+            int periodCol = labelX;
+            int changeCol = x + 60;
+            int pctCol = x + 130;
+            int barCol = x + 180;
+
+            // Draw Net GEX section
+            if (_showMtfNetGex)
+            {
+                context.DrawString("Net GEX Change", fontSmall, Color.Gray, labelX, ty);
+                ty += lineHeight;
+
+                foreach (var pc in periodChanges)
+                {
+                    var changeColor = pc.NetChange >= 0 ? _mtfPositiveColor : _mtfNegativeColor;
+                    var arrow = pc.NetChange >= 0 ? "▲" : "▼";
+
+                    // Heatmap background if enabled
+                    if (_showMtfHeatmap)
+                    {
+                        int intensity = (int)(Math.Abs(pc.NetChange) / maxAbsChange * 80);
+                        var heatColor = pc.NetChange >= 0
+                            ? Color.FromArgb(intensity, 0, 200, 100)
+                            : Color.FromArgb(intensity, 200, 60, 60);
+                        var rowRect = new Rectangle(x + 2, ty - 1, panelWidth - 4, lineHeight);
+                        context.FillRectangle(heatColor, rowRect);
+                    }
+
+                    // Period label
+                    context.DrawString(periodLabels[pc.Period], font, Color.LightGray, periodCol, ty);
+
+                    // Change value with arrow
+                    context.DrawString($"{arrow} {FormatCompact(pc.NetChange)}", font, changeColor, changeCol, ty);
+
+                    // Percentage
+                    if (_showMtfPercentChange)
+                    {
+                        var pctText = $"{(pc.NetChangePercent >= 0 ? "+" : "")}{pc.NetChangePercent:0.0}%";
+                        context.DrawString(pctText, fontSmall, changeColor, pctCol, ty);
+                    }
+
+                    // Trend bar
+                    if (_showMtfTrendBars && !_mtfCompactMode)
+                    {
+                        DrawMtfTrendBar(context, barCol, ty + 2, _mtfTrendBarWidth, lineHeight - 4,
+                            pc.NetChange, maxAbsChange, changeColor);
+                    }
+
+                    ty += lineHeight;
+                }
+
+                ty += sectionGap;
+            }
+
+            // Draw separator
+            if (_showMtfNetGex && _showMtfTopStrikes)
+            {
+                var sepPen = new RenderPen(Color.FromArgb(60, 150, 150, 150), 1);
+                context.DrawLine(sepPen, x + 5, ty, x + panelWidth - 5, ty);
+                ty += sectionGap;
+            }
+
+            // Draw Top Movers section
+            if (_showMtfTopStrikes)
+            {
+                context.DrawString("Top Movers by Period", fontSmall, Color.Gray, labelX, ty);
+                ty += lineHeight;
+
+                if (_mtfCompactMode)
+                {
+                    // Compact: just show top mover per period
+                    foreach (var pc in periodChanges)
+                    {
+                        if (pc.TopMovers.Count == 0) continue;
+
+                        var top = pc.TopMovers[0];
+                        var changeColor = top.Change >= 0 ? _mtfPositiveColor : _mtfNegativeColor;
+                        var arrow = top.Change >= 0 ? "▲" : "▼";
+
+                        // Period
+                        context.DrawString(periodLabels[pc.Period], fontSmall, Color.Gray, periodCol, ty);
+
+                        // Strike
+                        context.DrawString($"{top.Strike:0}", font, Color.Cyan, changeCol, ty);
+
+                        // Change
+                        context.DrawString($"{arrow}{FormatCompact(top.Change)}", font, changeColor, pctCol, ty);
+
+                        ty += lineHeight;
+                    }
+                }
+                else
+                {
+                    // Full: show header for each period with top movers
+                    foreach (var pc in periodChanges)
+                    {
+                        // Period header
+                        var periodHeaderColor = Color.FromArgb(180, _mtfPanelHeaderColor);
+                        context.DrawString($"• {periodLabels[pc.Period]}", fontSmall, periodHeaderColor, periodCol, ty);
+                        ty += lineHeight;
+
+                        int strikeCol = labelX + 15;
+                        int valCol = x + 80;
+                        int movPctCol = x + 140;
+
+                        foreach (var mover in pc.TopMovers)
+                        {
+                            var changeColor = mover.Change >= 0 ? _mtfPositiveColor : _mtfNegativeColor;
+                            var arrow = mover.Change >= 0 ? "▲" : "▼";
+
+                            // Strike
+                            context.DrawString($"{mover.Strike:0}", font, Color.Cyan, strikeCol, ty);
+
+                            // Change value
+                            context.DrawString($"{arrow}{FormatCompact(mover.Change)}", font, changeColor, valCol, ty);
+
+                            // Percentage
+                            if (_showMtfPercentChange)
+                            {
+                                var pctText = $"{(mover.Pct >= 0 ? "+" : "")}{mover.Pct:0}%";
+                                context.DrawString(pctText, fontSmall, changeColor, movPctCol, ty);
+                            }
+
+                            ty += lineHeight;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void DrawMtfTrendBar(RenderContext context, int x, int y, int maxWidth, int height, decimal value, decimal maxValue, Color color)
+        {
+            // Background
+            context.FillRectangle(Color.FromArgb(40, 100, 100, 100), new Rectangle(x, y, maxWidth, height));
+
+            // Calculate bar width
+            double ratio = maxValue != 0 ? (double)Math.Abs(value) / (double)maxValue : 0;
+            int barWidth = (int)(maxWidth * ratio * 0.9);
+            barWidth = Math.Clamp(barWidth, 0, maxWidth);
+
+            if (barWidth > 0)
+            {
+                // Gradient effect using two rectangles
+                int halfBar = barWidth / 2;
+                var lightColor = Color.FromArgb(200, color);
+                var darkColor = Color.FromArgb(120, color);
+
+                context.FillRectangle(lightColor, new Rectangle(x, y, halfBar, height));
+                context.FillRectangle(darkColor, new Rectangle(x + halfBar, y, barWidth - halfBar, height));
+
+                // Highlight at start
+                context.FillRectangle(Color.FromArgb(100, Color.White), new Rectangle(x, y, 2, height));
+            }
+        }
+
         private void DrawSectionHeader(RenderContext context, string title, int x, int y, int width, RenderFont font, Color color)
         {
             // Draw section header with underline effect
@@ -1612,6 +3176,109 @@ namespace ATAS.Indicators.Technical
 
             var color = value >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
             context.FillRectangle(Color.FromArgb(200, color), new Rectangle(x, y, barWidth, height));
+        }
+
+        private void DrawSparkline(RenderContext context, int x, int y, List<decimal> dataPoints)
+        {
+            if (dataPoints.Count < 2) return;
+
+            int width = _sparklineWidth;
+            int height = _sparklineHeight;
+
+            // Draw background
+            if (_sparklineShowBackground)
+            {
+                var bgRect = new Rectangle(x, y, width, height);
+                context.FillRectangle(_sparklineBackColor, bgRect);
+            }
+
+            // Find min/max for scaling
+            decimal minVal = dataPoints.Min();
+            decimal maxVal = dataPoints.Max();
+            decimal range = maxVal - minVal;
+
+            // Handle flat line case
+            if (range == 0)
+            {
+                range = Math.Abs(maxVal) > 0 ? Math.Abs(maxVal) * 0.1m : 1m;
+                minVal -= range / 2;
+                maxVal += range / 2;
+                range = maxVal - minVal;
+            }
+
+            // Add padding to range
+            decimal padding = range * 0.1m;
+            minVal -= padding;
+            maxVal += padding;
+            range = maxVal - minVal;
+
+            // Calculate point positions
+            int numPoints = dataPoints.Count;
+            float xStep = (float)(width - 2) / (numPoints - 1);
+            var points = new List<(int X, int Y)>();
+
+            for (int i = 0; i < numPoints; i++)
+            {
+                int px = x + 1 + (int)(i * xStep);
+                // Invert Y: higher values should be at top
+                float ratio = (float)((dataPoints[i] - minVal) / range);
+                int py = y + height - 1 - (int)(ratio * (height - 2));
+                py = Math.Clamp(py, y + 1, y + height - 2);
+                points.Add((px, py));
+            }
+
+            // Draw zero line if enabled and zero is in range
+            if (_sparklineShowZeroLine && minVal < 0 && maxVal > 0)
+            {
+                float zeroRatio = (float)((0 - minVal) / range);
+                int zeroY = y + height - 1 - (int)(zeroRatio * (height - 2));
+                var zeroPen = new RenderPen(Color.FromArgb(80, 200, 200, 200), 1) { DashStyle = DashStyle.Dot };
+                context.DrawLine(zeroPen, x + 1, zeroY, x + width - 1, zeroY);
+            }
+
+            // Determine line color based on trend (first vs last point)
+            Color lineColor;
+            decimal firstVal = dataPoints[0];
+            decimal lastVal = dataPoints[^1];
+            if (lastVal > firstVal)
+            {
+                lineColor = _sparklineUpColor;
+            }
+            else if (lastVal < firstVal)
+            {
+                lineColor = _sparklineDownColor;
+            }
+            else
+            {
+                lineColor = _sparklineNeutralColor;
+            }
+
+            var linePen = new RenderPen(lineColor, _sparklineThickness);
+
+            // Draw line segments
+            for (int i = 0; i < points.Count - 1; i++)
+            {
+                context.DrawLine(linePen, points[i].X, points[i].Y, points[i + 1].X, points[i + 1].Y);
+            }
+
+            // Draw data points (dots)
+            if (_sparklineShowDots)
+            {
+                int dotSize = Math.Max(2, _sparklineThickness + 1);
+                foreach (var pt in points)
+                {
+                    var dotRect = new Rectangle(pt.X - dotSize / 2, pt.Y - dotSize / 2, dotSize, dotSize);
+                    context.FillRectangle(lineColor, dotRect);
+                }
+
+                // Highlight the last (current) point
+                var lastPt = points[^1];
+                int highlightSize = dotSize + 2;
+                var highlightRect = new Rectangle(lastPt.X - highlightSize / 2, lastPt.Y - highlightSize / 2, highlightSize, highlightSize);
+                context.FillRectangle(Color.White, highlightRect);
+                var innerRect = new Rectangle(lastPt.X - dotSize / 2, lastPt.Y - dotSize / 2, dotSize, dotSize);
+                context.FillRectangle(lineColor, innerRect);
+            }
         }
 
         private void DrawStrikeGrid(RenderContext context, decimal conversionFactor, int fullWidth)
@@ -1739,6 +3406,114 @@ namespace ATAS.Indicators.Technical
                 var negLabelY = Math.Min(chartHeight - 20, zeroGammaY + 15);
                 context.DrawString(negLabel, labelFont, Color.FromArgb(120, _negativeGexColor), labelX, negLabelY);
             }
+        }
+
+        private void DrawSpotPriceLine(RenderContext context, decimal spotPrice, decimal factor, int fullWidth)
+        {
+            // Convert spot price to chart coordinates
+            decimal chartSpotPrice = _enableConversion ? RoundToStep(spotPrice * factor, _priceStep) : spotPrice;
+            int spotY = ChartInfo.PriceChartContainer.GetYByPrice(chartSpotPrice, false);
+
+            // Draw the spot price line
+            var spotPen = new RenderPen(_spotPriceLineColor, _spotPriceLineThickness) { DashStyle = _spotPriceLineDash };
+            context.DrawLine(spotPen, 0, spotY, fullWidth, spotY);
+
+            // Draw spot price label
+            if (_showSpotPriceLabel)
+            {
+                var labelFont = new RenderFont("Arial", 9);
+                var labelText = $"SPOT: {spotPrice:0.00}";
+
+                // Draw label background
+                int labelWidth = EstimateTextWidth(labelText, labelFont) + 8;
+                int labelHeight = 14;
+                int labelX = fullWidth - labelWidth - 5;
+                int labelY = spotY - labelHeight / 2;
+
+                var labelBgRect = new Rectangle(labelX - 2, labelY - 1, labelWidth + 4, labelHeight + 2);
+                context.FillRectangle(Color.FromArgb(200, 20, 20, 25), labelBgRect);
+                context.DrawRectangle(new RenderPen(_spotPriceLineColor, 1), labelBgRect);
+
+                context.DrawString(labelText, labelFont, _spotPriceLineColor, labelX, labelY);
+            }
+        }
+
+        private List<T> ApplyStrikeFilter<T>(List<T> strikes, decimal spotPrice) where T : class
+        {
+            if (strikes.Count == 0 || spotPrice <= 0) return strikes;
+
+            // Use reflection to get OriginalStrike and GexValue properties (since we're using anonymous type)
+            var strikeType = strikes[0].GetType();
+            var originalStrikeProp = strikeType.GetProperty("OriginalStrike");
+            var gexValueProp = strikeType.GetProperty("GexValue");
+
+            if (originalStrikeProp == null || gexValueProp == null) return strikes;
+
+            var filtered = strikes.AsEnumerable();
+
+            // Apply minimum GEX threshold filter
+            if (_minGexThreshold > 0)
+            {
+                filtered = filtered.Where(s =>
+                {
+                    var gex = (decimal)(gexValueProp.GetValue(s) ?? 0m);
+                    return Math.Abs(gex) >= _minGexThreshold;
+                });
+            }
+
+            // Apply range filter based on mode
+            switch (_strikeFilterMode)
+            {
+                case StrikeFilterMode.PercentFromSpot:
+                    decimal minStrike = spotPrice * (1 - _strikeFilterPercent / 100m);
+                    decimal maxStrike = spotPrice * (1 + _strikeFilterPercent / 100m);
+
+                    filtered = filtered.Where(s =>
+                    {
+                        var strike = (decimal)(originalStrikeProp.GetValue(s) ?? 0m);
+                        return strike >= minStrike && strike <= maxStrike;
+                    });
+                    break;
+
+                case StrikeFilterMode.FixedRange:
+                    if (_strikeFilterMinPrice > 0)
+                    {
+                        filtered = filtered.Where(s =>
+                        {
+                            var strike = (decimal)(originalStrikeProp.GetValue(s) ?? 0m);
+                            return strike >= _strikeFilterMinPrice;
+                        });
+                    }
+                    if (_strikeFilterMaxPrice > 0)
+                    {
+                        filtered = filtered.Where(s =>
+                        {
+                            var strike = (decimal)(originalStrikeProp.GetValue(s) ?? 0m);
+                            return strike <= _strikeFilterMaxPrice;
+                        });
+                    }
+                    break;
+
+                case StrikeFilterMode.StrikeCount:
+                    // Get strikes closest to spot price
+                    filtered = filtered
+                        .OrderBy(s =>
+                        {
+                            var strike = (decimal)(originalStrikeProp.GetValue(s) ?? 0m);
+                            return Math.Abs(strike - spotPrice);
+                        })
+                        .Take(_strikeFilterCount);
+                    break;
+            }
+
+            return filtered.ToList();
+        }
+
+        private bool IsStrikeNearSpot(decimal strike, decimal spotPrice)
+        {
+            if (!_highlightNearSpotStrikes || spotPrice <= 0) return false;
+            decimal range = spotPrice * (_nearSpotRange / 100m);
+            return Math.Abs(strike - spotPrice) <= range;
         }
         #endregion
 
@@ -1940,7 +3715,66 @@ namespace ATAS.Indicators.Technical
             }
 
             // Sort alerts by absolute change (most significant first)
-            return alerts.OrderByDescending(a => Math.Abs(a.Change)).ToList();
+            var sortedAlerts = alerts.OrderByDescending(a => Math.Abs(a.Change)).ToList();
+
+            // Add to alert history if enabled
+            if (_enableAlertHistory && sortedAlerts.Count > 0)
+            {
+                AddAlertsToHistory(sortedAlerts);
+            }
+
+            return sortedAlerts;
+        }
+
+        private void AddAlertsToHistory(List<AlertInfo> alerts)
+        {
+            var now = DateTime.Now;
+            var cutoffTime = now.AddSeconds(-_alertHistoryDuplicateWindowSec);
+            bool soundPlayed = false;
+
+            lock (_sync)
+            {
+                foreach (var alert in alerts)
+                {
+                    // Create history entry
+                    var entry = new AlertHistoryEntry
+                    {
+                        Timestamp = now,
+                        Strike = alert.Strike,
+                        Change = alert.Change,
+                        ChangePercent = alert.ChangePercent,
+                        IsIncrease = alert.IsIncrease,
+                        TimePeriod = alert.TimePeriod
+                    };
+
+                    // Check for duplicates within the time window
+                    if (_alertHistoryDuplicateWindowSec > 0)
+                    {
+                        bool isDuplicate = _alertHistory.Any(h =>
+                            h.Strike == entry.Strike &&
+                            h.IsIncrease == entry.IsIncrease &&
+                            h.Timestamp > cutoffTime);
+
+                        if (isDuplicate) continue;
+                    }
+
+                    // Add to history (newest first)
+                    _alertHistory.Insert(0, entry);
+
+                    // Play sound for new alert (respecting soundOnlyFirstAlert setting)
+                    if (_enableSoundAlerts && (!_soundOnlyFirstAlert || !soundPlayed))
+                    {
+                        PlayAlertSound(alert.IsIncrease);
+                        soundPlayed = true;
+                    }
+
+                    // Trim if exceeded max
+                    while (_alertHistory.Count > _alertHistoryMaxItems)
+                    {
+                        _alertHistory.RemoveAt(_alertHistory.Count - 1);
+                    }
+                }
+            }
         }
         #endregion
     }
