@@ -603,11 +603,126 @@ namespace ATAS.Indicators.Technical
         private Color _crossUpColor = Color.LimeGreen;
         private Color _crossDownColor = Color.Red;
 
+        // ITM Impact Dominance Candle Coloring
+        public enum ItmDominancePaintMode
+        {
+            [Display(Name = "Off")]
+            Off,
+            [Display(Name = "Ratio only")]
+            RatioOnly,
+            [Display(Name = "Ratio + slope (short)")]
+            RatioAndSlopeShort,
+            [Display(Name = "Regime (multi-state)")]
+            Regime
+        }
+
+        private bool _colorCandlesByItmDominance = true;
+        private ItmDominancePaintMode _itmPaintMode = ItmDominancePaintMode.Regime;
+        private int _itmSlopeWindowShort = 30;
+        private int _itmSlopeWindowMedium = 90;
+        private int _itmSlopeWindowLong = 300;
+        private double _itmSlopeStrong = 0.005;
+        private double _itmSlopeWeak = 0.001;
+        private double _itmRatioSlopeThreshold = 0.002;
+        private double _itmRatioStrong = 1.5;
+        private double _itmRatioWeak = 1.15;
+        private double _itmEpsIgnore = 1e-6;
+
+        private Color _itmCallsStrongColor = Color.LimeGreen;
+        private Color _itmCallsWeakColor = Color.FromArgb(255, 110, 220, 110);
+        private Color _itmPutsStrongColor = Color.IndianRed;
+        private Color _itmPutsWeakColor = Color.Salmon;
+        private Color _itmNeutralColor = Color.Gray;
+        private Color _itmCallsTakeoverColor = Color.Gold;
+        private Color _itmPutsConsolidateColor = Color.DeepSkyBlue;
+
+        private readonly List<double> _itmCallAbsSeries = new();
+        private readonly List<double> _itmPutAbsSeries = new();
+        private readonly List<double> _itmRatioSeries = new();
+
         [Display(GroupName = "4. Candle Coloring", Name = "Color Candles by Cross", Order = 10, Description = "Colorear velas cuando Series1 cruza Series2")]
         public bool ColorCandlesByCross
         {
             get => _colorCandlesByCross;
             set { _colorCandlesByCross = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "Color candles by ITM dominance", Order = 11, Description = "Colorea velas según dominancia Call/Put en ITM impact")]
+        public bool ColorCandlesByItmDominance
+        {
+            get => _colorCandlesByItmDominance;
+            set { _colorCandlesByItmDominance = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM dominance mode", Order = 12)]
+        public ItmDominancePaintMode ItmDominanceMode
+        {
+            get => _itmPaintMode;
+            set { _itmPaintMode = value; RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM ratio strong", Order = 13, Description = "Ratio |call|/|put| para dominancia fuerte (ej: 1.5)")]
+        [Range(1.01, 100)]
+        public double ItmRatioStrong
+        {
+            get => _itmRatioStrong;
+            set { _itmRatioStrong = Math.Max(1.01, value); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM ratio weak", Order = 14, Description = "Ratio |call|/|put| para dominancia leve (ej: 1.15)")]
+        [Range(1.01, 100)]
+        public double ItmRatioWeak
+        {
+            get => _itmRatioWeak;
+            set { _itmRatioWeak = Math.Max(1.01, value); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM slope window short", Order = 15)]
+        [Range(5, 2000)]
+        public int ItmSlopeWindowShort
+        {
+            get => _itmSlopeWindowShort;
+            set { _itmSlopeWindowShort = Math.Clamp(value, 5, 2000); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM slope window medium", Order = 16)]
+        [Range(5, 5000)]
+        public int ItmSlopeWindowMedium
+        {
+            get => _itmSlopeWindowMedium;
+            set { _itmSlopeWindowMedium = Math.Clamp(value, 5, 5000); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM slope window long", Order = 17)]
+        [Range(5, 20000)]
+        public int ItmSlopeWindowLong
+        {
+            get => _itmSlopeWindowLong;
+            set { _itmSlopeWindowLong = Math.Clamp(value, 5, 20000); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM slope strong", Order = 18)]
+        [Range(0.0001, 1)]
+        public double ItmSlopeStrong
+        {
+            get => _itmSlopeStrong;
+            set { _itmSlopeStrong = Math.Max(0.0001, value); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM slope weak", Order = 19)]
+        [Range(0.0001, 1)]
+        public double ItmSlopeWeak
+        {
+            get => _itmSlopeWeak;
+            set { _itmSlopeWeak = Math.Max(0.0001, value); RecalculateValues(); }
+        }
+
+        [Display(GroupName = "4. Candle Coloring", Name = "ITM ratio slope threshold", Order = 20, Description = "Umbral slope del ratio a corto plazo (ej: 0.002)")]
+        [Range(0.0001, 1)]
+        public double ItmRatioSlopeThreshold
+        {
+            get => _itmRatioSlopeThreshold;
+            set { _itmRatioSlopeThreshold = Math.Max(0.0001, value); RecalculateValues(); }
         }
 
         [Display(GroupName = "4. Candle Coloring", Name = "Cross Up Color", Order = 20, Description = "Color cuando Series1 cruza al alza sobre Series2")]
@@ -1049,7 +1164,176 @@ namespace ATAS.Indicators.Technical
                         _candleColorSeries[bar] = ToMediaColor(_crossDownColor);
                 }
 
+                // ITM dominance candle coloring
+                if (_colorCandlesByItmDominance && _itmPaintMode != ItmDominancePaintMode.Off)
+                {
+                    ApplyItmDominanceColor(bar, closestData);
+                }
+
             }
+        }
+
+        private void ApplyItmDominanceColor(int bar, MoneyFlowData data)
+        {
+            // Read ITM impacts (absolute) from dynamic columns.
+            // MoneyFlowData legacy properties do not include these fields, so we read ColumnValues.
+            if (!data.ColumnValues.TryGetValue("call_itm_impact", out var callItm))
+                callItm = 0m;
+            if (!data.ColumnValues.TryGetValue("put_itm_impact", out var putItm))
+                putItm = 0m;
+
+            double c = Math.Abs((double)callItm);
+            double p = Math.Abs((double)putItm);
+
+            // 1) ignore near-zero rows
+            if (c <= _itmEpsIgnore && p <= _itmEpsIgnore)
+                return;
+
+            // Maintain simple per-bar series to compute slopes.
+            EnsureSeriesSize(_itmCallAbsSeries, bar);
+            EnsureSeriesSize(_itmPutAbsSeries, bar);
+            EnsureSeriesSize(_itmRatioSeries, bar);
+            _itmCallAbsSeries[bar] = c;
+            _itmPutAbsSeries[bar] = p;
+
+            double ratio = p > _itmEpsIgnore ? (c / p) : (c > _itmEpsIgnore ? 999.0 : 1.0);
+            _itmRatioSeries[bar] = ratio;
+
+            // slopes
+            double slopeCallS = CalculateSlope(_itmCallAbsSeries, _itmSlopeWindowShort);
+            double slopePutS = CalculateSlope(_itmPutAbsSeries, _itmSlopeWindowShort);
+            double slopeRatioS = CalculateSlope(_itmRatioSeries, _itmSlopeWindowShort);
+            double slopeCallM = CalculateSlope(_itmCallAbsSeries, _itmSlopeWindowMedium);
+            double slopePutM = CalculateSlope(_itmPutAbsSeries, _itmSlopeWindowMedium);
+            double slopeCallL = CalculateSlope(_itmCallAbsSeries, _itmSlopeWindowLong);
+            double slopePutL = CalculateSlope(_itmPutAbsSeries, _itmSlopeWindowLong);
+
+            var callTrendS = ClassifyTrend(slopeCallS);
+            var putTrendS = ClassifyTrend(slopePutS);
+
+            Color? color = null;
+            switch (_itmPaintMode)
+            {
+                case ItmDominancePaintMode.RatioOnly:
+                    color = ColorForRatio(ratio);
+                    break;
+                case ItmDominancePaintMode.RatioAndSlopeShort:
+                    color = ColorForRatioAndSlope(ratio, slopeRatioS);
+                    break;
+                case ItmDominancePaintMode.Regime:
+                default:
+                    // Combined classification (multi-state)
+                    if (slopeRatioS > _itmRatioSlopeThreshold)
+                    {
+                        // Calls take recent advantage
+                        color = _itmCallsTakeoverColor;
+                    }
+                    else if (slopeRatioS < -_itmRatioSlopeThreshold)
+                    {
+                        // Puts consolidate dominance
+                        color = _itmPutsConsolidateColor;
+                    }
+                    else if (putTrendS == TrendClass.Flat && callTrendS == TrendClass.UpStrong)
+                    {
+                        // bullish scenario: calls rising, puts flat (often near highs)
+                        color = _itmCallsTakeoverColor;
+                    }
+                    else if (ratio >= _itmRatioStrong)
+                    {
+                        color = _itmCallsStrongColor;
+                    }
+                    else if (ratio >= _itmRatioWeak)
+                    {
+                        color = _itmCallsWeakColor;
+                    }
+                    else if (ratio <= 1.0 / _itmRatioStrong)
+                    {
+                        color = _itmPutsStrongColor;
+                    }
+                    else if (ratio <= 1.0 / _itmRatioWeak)
+                    {
+                        color = _itmPutsWeakColor;
+                    }
+                    else
+                    {
+                        // If both moving same direction, tint based on medium/long dominance
+                        bool bothUp = slopeCallM > _itmSlopeWeak && slopePutM > _itmSlopeWeak;
+                        bool bothDown = slopeCallM < -_itmSlopeWeak && slopePutM < -_itmSlopeWeak;
+                        if (bothUp || bothDown)
+                        {
+                            // prefer stronger long-term trend
+                            if (Math.Abs(slopeCallL) > Math.Abs(slopePutL))
+                                color = slopeCallL >= 0 ? _itmCallsWeakColor : _itmPutsWeakColor;
+                            else
+                                color = slopePutL >= 0 ? _itmPutsWeakColor : _itmCallsWeakColor;
+                        }
+                        else
+                        {
+                            color = _itmNeutralColor;
+                        }
+                    }
+                    break;
+            }
+
+            if (color.HasValue)
+                _candleColorSeries[bar] = ToMediaColor(color.Value);
+        }
+
+        private static void EnsureSeriesSize(List<double> list, int index)
+        {
+            while (list.Count <= index)
+                list.Add(0);
+        }
+
+        private enum TrendClass { UpStrong, UpWeak, Flat, DownWeak, DownStrong }
+
+        private TrendClass ClassifyTrend(double slope)
+        {
+            if (slope > _itmSlopeStrong) return TrendClass.UpStrong;
+            if (slope > _itmSlopeWeak) return TrendClass.UpWeak;
+            if (slope < -_itmSlopeStrong) return TrendClass.DownStrong;
+            if (slope < -_itmSlopeWeak) return TrendClass.DownWeak;
+            return TrendClass.Flat;
+        }
+
+        private Color ColorForRatio(double ratio)
+        {
+            if (ratio >= _itmRatioStrong) return _itmCallsStrongColor;
+            if (ratio >= _itmRatioWeak) return _itmCallsWeakColor;
+            if (ratio <= 1.0 / _itmRatioStrong) return _itmPutsStrongColor;
+            if (ratio <= 1.0 / _itmRatioWeak) return _itmPutsWeakColor;
+            return _itmNeutralColor;
+        }
+
+        private Color ColorForRatioAndSlope(double ratio, double slopeRatioShort)
+        {
+            if (slopeRatioShort > _itmRatioSlopeThreshold)
+                return _itmCallsTakeoverColor;
+            if (slopeRatioShort < -_itmRatioSlopeThreshold)
+                return _itmPutsConsolidateColor;
+            return ColorForRatio(ratio);
+        }
+
+        private double CalculateSlope(List<double> values, int window)
+        {
+            if (window <= 1 || values.Count < window)
+                return 0;
+
+            var recent = values.Skip(values.Count - window).ToList();
+            var x = Enumerable.Range(0, window).Select(i => (double)i).ToList();
+            var y = recent.Select(v => Math.Log(v + 1e-8)).ToList();
+
+            double sumX = x.Sum();
+            double sumY = y.Sum();
+            double sumXY = x.Zip(y, (a, b) => a * b).Sum();
+            double sumX2 = x.Sum(a => a * a);
+
+            double n = window;
+            double denom = (n * sumX2 - sumX * sumX);
+            if (Math.Abs(denom) < 1e-12)
+                return 0;
+            double slope = (n * sumXY - sumX * sumY) / denom;
+            return slope;
         }
 
         private MoneyFlowData FindClosestDataByTime(DateTime targetTime)

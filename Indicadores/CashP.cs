@@ -1047,6 +1047,94 @@ namespace ATAS.Indicators.Technical
             set { _netChangeTextColor = value; RequestRecalc(); }
         }
 
+        // 11b. Local dominance panel (current strike +/- N)
+        private bool _showLocalDominancePanel = false;
+		public enum LocalPanelAlign { Left, Center, Right }
+        private int _localDominanceRange = 3;
+        private int _localDominanceFontSize = 10;
+        private int _localDominanceRowHeightPx = 12;
+        private int _localDominanceRowSpacingPx = 4;
+        private int _localDominanceBarWidthPx = 150;
+        private int _localDominanceLabelWidthPx = 40;
+        private int _localDominancePanelX = 10;
+        private int _localDominancePanelY = 80;
+		private LocalPanelAlign _localDominanceAlign = LocalPanelAlign.Left;
+        private Color _localDominanceHeaderColor = Color.LightSteelBlue;
+        private Color _localDominanceTextColor = Color.White;
+        private Color _localDominanceBackBar = Color.FromArgb(60, 120, 120, 120);
+        private Color _localDominanceHighlightBack = Color.FromArgb(110, 255, 255, 255);
+        private Color _localDominanceHighlightText = Color.Black;
+
+        [Display(GroupName = "11. Alerts", Name = "Show local dominance panel", Order = 60)]
+        public bool ShowLocalDominancePanel
+        {
+            get => _showLocalDominancePanel;
+            set { _showLocalDominancePanel = value; RequestRecalc(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Local range (+/- strikes)", Order = 70)]
+        [Range(1, 50)]
+        public int LocalDominanceRange
+        {
+            get => _localDominanceRange;
+            set { _localDominanceRange = Math.Clamp(value, 1, 50); RequestRecalc(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Local font size", Order = 80)]
+        [Range(6, 40)]
+        public int LocalDominanceFontSize
+        {
+            get => _localDominanceFontSize;
+            set { _localDominanceFontSize = Math.Clamp(value, 6, 40); RequestRecalc(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Local row height (px)", Order = 90)]
+        [Range(8, 60)]
+        public int LocalDominanceRowHeightPx
+        {
+            get => _localDominanceRowHeightPx;
+            set { _localDominanceRowHeightPx = Math.Clamp(value, 8, 60); RequestRecalc(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Local row spacing (px)", Order = 100)]
+        [Range(0, 40)]
+        public int LocalDominanceRowSpacingPx
+        {
+            get => _localDominanceRowSpacingPx;
+            set { _localDominanceRowSpacingPx = Math.Clamp(value, 0, 40); RequestRecalc(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Local bar width (px)", Order = 110)]
+        [Range(60, 600)]
+        public int LocalDominanceBarWidthPx
+        {
+            get => _localDominanceBarWidthPx;
+            set { _localDominanceBarWidthPx = Math.Clamp(value, 60, 600); RequestRecalc(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Local panel X", Order = 120)]
+        [Range(0, 5000)]
+        public int LocalDominancePanelX
+        {
+            get => _localDominancePanelX;
+            set { _localDominancePanelX = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+        [Display(GroupName = "11. Alerts", Name = "Local panel Y", Order = 130)]
+        [Range(0, 5000)]
+        public int LocalDominancePanelY
+        {
+            get => _localDominancePanelY;
+            set { _localDominancePanelY = Math.Clamp(value, 0, 5000); RequestRecalc(); }
+        }
+
+		[Display(GroupName = "11. Alerts", Name = "Local panel align", Order = 115)]
+		public LocalPanelAlign LocalDominancePanelAlign
+		{
+			get => _localDominanceAlign;
+			set { _localDominanceAlign = value; RequestRecalc(); }
+		}
+
         // 12. Big trades (marcadores de incrementos grandes por strike)
         private bool _showBigTradeMarkers = false;
         private decimal _bigTradeThreshold = 1000m; // cambio mínimo para mostrar
@@ -1724,6 +1812,9 @@ namespace ATAS.Indicators.Technical
             if (_showTopSummary && !IsDarkPoolProfile)
                 DrawTopSummary(context, xCenter, snapshot);
 
+            if (_showLocalDominancePanel && !IsDarkPoolProfile)
+                DrawLocalDominancePanel(context, snapshot);
+
             // NUEVO: Dibujar Persistent Big Trades en el gráfico de precios (en coordenadas de strike)
             if (_showPersistentBigTrades && _persistentBigTrades.Count > 0)
             {
@@ -1749,18 +1840,20 @@ namespace ATAS.Indicators.Technical
                         Color markerColor = pbt.IsCall ? _persistentBigTradeCallsColor : _persistentBigTradePutsColor;
                         var ellipseRect = new Rectangle(xBar - radius, yStrike - radius, radius * 2, radius * 2);
 
-                        // Dibujar el círculo del big trade
-                        try 
-                        { 
-                            context.FillEllipse(Color.FromArgb(_persistentBigTradeOpacity, markerColor), ellipseRect);
-                            context.DrawEllipse(new RenderPen(markerColor, 2), ellipseRect);
-                        }
-                        catch 
-                        { 
-                            context.FillRectangle(Color.FromArgb(_persistentBigTradeOpacity, markerColor), ellipseRect);
-                        }
+					// Dibujar el círculo del big trade
+					try
+					{
+						context.FillEllipse(Color.FromArgb(_persistentBigTradeOpacity, markerColor), ellipseRect);
+						context.DrawEllipse(new RenderPen(markerColor, 2), ellipseRect);
+					}
+					catch
+					{
+						context.FillRectangle(Color.FromArgb(_persistentBigTradeOpacity, markerColor), ellipseRect);
+					}
 
-                        // Dibujar valor dentro del círculo
+
+
+						// Dibujar valor dentro del círculo
                         if (_persistentBigTradeShowValue)
                         {
                             var fontBt = new RenderFont("Arial", _persistentBigTradeFontSize);
@@ -1865,6 +1958,125 @@ namespace ATAS.Indicators.Technical
                 catch { }
             }
         }
+
+		private void DrawLocalDominancePanel(RenderContext context, List<StrikeRow> snapshot)
+		{
+			if (ChartInfo?.PriceChartContainer == null)
+				return;
+			if (snapshot == null || snapshot.Count == 0)
+				return;
+
+			var px = _lastEsPrice;
+			if (px <= 0)
+				return;
+
+			var ordered = snapshot.OrderBy(r => r.Strike).ToList();
+			int idx = -1;
+			decimal best = decimal.MaxValue;
+			for (int i = 0; i < ordered.Count; i++)
+			{
+				var d = Math.Abs(ordered[i].Strike - px);
+				if (d < best)
+				{
+					best = d;
+					idx = i;
+				}
+			}
+
+			if (idx < 0)
+				return;
+
+			int start = Math.Max(0, idx - _localDominanceRange);
+			int end = Math.Min(ordered.Count - 1, idx + _localDominanceRange);
+			if (end < start)
+				return;
+
+			Color callsCol, putsCol;
+			switch (_profileType)
+			{
+				case ProfileDataType.IV:
+					callsCol = _ivCallsColor; putsCol = _ivPutsColor; break;
+				case ProfileDataType.Delta:
+					callsCol = _deltaCallsColor; putsCol = _deltaPutsColor; break;
+				case ProfileDataType.Gex:
+					callsCol = _gexCallsColor; putsCol = _gexPutsColor; break;
+				case ProfileDataType.Cash:
+				case ProfileDataType.Custom:
+				default:
+					callsCol = _callsColor; putsCol = _putsColor; break;
+			}
+
+			var font = new RenderFont("Arial", _localDominanceFontSize);
+			int rowH = _localDominanceRowHeightPx;
+			int gap = _localDominanceRowSpacingPx;
+			int barW = _localDominanceBarWidthPx;
+			int labelW = _localDominanceLabelWidthPx;
+
+			int x;
+			int panelW = labelW + barW + 120;
+			switch (_localDominanceAlign)
+			{
+				case LocalPanelAlign.Center:
+					x = Math.Max(0, (ChartInfo.Region.Width - panelW) / 2);
+					break;
+				case LocalPanelAlign.Right:
+					x = Math.Max(0, ChartInfo.Region.Width - panelW - _localDominancePanelX);
+					break;
+				case LocalPanelAlign.Left:
+				default:
+					x = _localDominancePanelX;
+					break;
+			}
+			int y = _localDominancePanelY;
+
+			context.DrawString("DOMINANCIA LOCAL", font, _localDominanceHeaderColor, x, y);
+			y += _localDominanceFontSize + 6;
+
+			for (int i = start; i <= end; i++)
+			{
+				var r = ordered[i];
+				bool isCurrent = i == idx;
+
+				decimal net = _profileType == ProfileDataType.Gex ? (r.Calls + r.Puts) : (r.Calls - r.Puts);
+				decimal netAbs = Math.Abs(net);
+
+				decimal callsMag = _profileType == ProfileDataType.Gex ? Math.Abs(r.Calls) : r.Calls;
+				decimal putsMag = _profileType == ProfileDataType.Gex ? Math.Abs(r.Puts) : r.Puts;
+				decimal denom = callsMag + putsMag;
+				if (denom <= 0) denom = 1;
+				bool domPuts = putsMag > callsMag;
+				decimal domPct = (Math.Max(callsMag, putsMag) / denom) * 100m;
+
+				if (isCurrent)
+					context.FillRectangle(_localDominanceHighlightBack, new Rectangle(x - 6, y - 2, panelW, rowH + 4));
+
+				var strikeTxt = r.StrikeSpy.ToString(_strikeFormat, CultureInfo.InvariantCulture);
+				var rowTextColor = isCurrent ? _localDominanceHighlightText : _localDominanceTextColor;
+				context.DrawString(strikeTxt, font, rowTextColor, x, y + (rowH - _localDominanceFontSize) / 2);
+
+				int xBar = x + labelW;
+				context.FillRectangle(_localDominanceBackBar, new Rectangle(xBar, y, barW, rowH));
+
+				int mid = xBar + barW / 2;
+				double ratio = Math.Clamp((double)(netAbs / denom), 0.0, 1.0);
+				int w = (int)Math.Round((barW / 2) * ratio);
+				if (w > 0)
+				{
+					if (net >= 0)
+						context.FillRectangle(callsCol, new Rectangle(mid, y, w, rowH));
+					else
+						context.FillRectangle(putsCol, new Rectangle(mid - w, y, w, rowH));
+				}
+
+				string sideTxt = domPuts ? "P" : "C";
+				string pctTxt = $"{Math.Round(domPct)}%";
+				int xRight = xBar + barW + 8;
+				context.DrawString(sideTxt, font, rowTextColor, xRight, y + (rowH - _localDominanceFontSize) / 2);
+				context.DrawString(pctTxt, font, rowTextColor, xRight + 16, y + (rowH - _localDominanceFontSize) / 2);
+
+				y += rowH + gap;
+			}
+		}
 
         private Color GetSummaryTextColorValue() => Color.White;
         private Color GetSummaryTotalColorValue() => Color.SteelBlue;
