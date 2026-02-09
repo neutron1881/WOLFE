@@ -52,6 +52,17 @@ namespace ATAS.Indicators.Technical
             public decimal SumGexVol { get; set; }
             public decimal SumGexOI { get; set; }
         }
+
+        private class AlertInfo
+        {
+            public decimal Strike { get; set; }
+            public decimal CurrentGex { get; set; }
+            public decimal PriorGex { get; set; }
+            public decimal Change { get; set; }
+            public decimal ChangePercent { get; set; }
+            public bool IsIncrease { get; set; }
+            public string TimePeriod { get; set; } = string.Empty;
+        }
         #endregion
 
         #region Fields
@@ -62,6 +73,8 @@ namespace ATAS.Indicators.Technical
         private string _error = string.Empty;
         private DateTime? _lastLoad;
         private decimal _lastChartPrice;
+        private List<AlertInfo> _activeAlerts = new();
+        private DateTime _lastPulseTime = DateTime.Now;
         #endregion
 
         #region API Settings
@@ -616,6 +629,100 @@ namespace ATAS.Indicators.Technical
         }
         #endregion
 
+        #region Alerts
+        private bool _enableAlerts = true;
+        [Display(GroupName = "9. Alerts", Name = "Enable alerts", Order = 10)]
+        public bool EnableAlerts
+        {
+            get => _enableAlerts;
+            set { _enableAlerts = value; RequestRecalc(); }
+        }
+
+        public enum AlertThresholdType { Percentage, AbsoluteValue, TopN }
+        private AlertThresholdType _alertThresholdType = AlertThresholdType.Percentage;
+        [Display(GroupName = "9. Alerts", Name = "Threshold type", Order = 20)]
+        public AlertThresholdType AlertThreshold
+        {
+            get => _alertThresholdType;
+            set { _alertThresholdType = value; RequestRecalc(); }
+        }
+
+        private decimal _alertThresholdValue = 50m;
+        [Display(GroupName = "9. Alerts", Name = "Threshold value (%/Value/TopN)", Order = 30)]
+        [Range(0, 10000)]
+        public decimal AlertThresholdValue
+        {
+            get => _alertThresholdValue;
+            set { _alertThresholdValue = Math.Max(0, value); RequestRecalc(); }
+        }
+
+        public enum AlertTimePeriod { OneMin, FiveMin, TenMin, FifteenMin, ThirtyMin }
+        private AlertTimePeriod _alertTimePeriod = AlertTimePeriod.FiveMin;
+        [Display(GroupName = "9. Alerts", Name = "Time period", Order = 40)]
+        public AlertTimePeriod AlertPeriod
+        {
+            get => _alertTimePeriod;
+            set { _alertTimePeriod = value; RequestRecalc(); }
+        }
+
+        private bool _alertOnIncrease = true;
+        [Display(GroupName = "9. Alerts", Name = "Alert on GEX increase", Order = 50)]
+        public bool AlertOnIncrease
+        {
+            get => _alertOnIncrease;
+            set { _alertOnIncrease = value; RequestRecalc(); }
+        }
+
+        private bool _alertOnDecrease = true;
+        [Display(GroupName = "9. Alerts", Name = "Alert on GEX decrease", Order = 60)]
+        public bool AlertOnDecrease
+        {
+            get => _alertOnDecrease;
+            set { _alertOnDecrease = value; RequestRecalc(); }
+        }
+
+        private Color _alertIncreaseColor = Color.FromArgb(255, 0, 255, 150);
+        [Display(GroupName = "9. Alerts", Name = "Increase alert color", Order = 70)]
+        public Color AlertIncreaseColor
+        {
+            get => _alertIncreaseColor;
+            set { _alertIncreaseColor = value; RequestRecalc(); }
+        }
+
+        private Color _alertDecreaseColor = Color.FromArgb(255, 255, 100, 0);
+        [Display(GroupName = "9. Alerts", Name = "Decrease alert color", Order = 80)]
+        public Color AlertDecreaseColor
+        {
+            get => _alertDecreaseColor;
+            set { _alertDecreaseColor = value; RequestRecalc(); }
+        }
+
+        private int _alertOutlineThickness = 3;
+        [Display(GroupName = "9. Alerts", Name = "Alert outline thickness", Order = 90)]
+        [Range(1, 10)]
+        public int AlertOutlineThickness
+        {
+            get => _alertOutlineThickness;
+            set { _alertOutlineThickness = Math.Clamp(value, 1, 10); RequestRecalc(); }
+        }
+
+        private bool _alertShowInPanel = true;
+        [Display(GroupName = "9. Alerts", Name = "Show alerts in panel", Order = 100)]
+        public bool AlertShowInPanel
+        {
+            get => _alertShowInPanel;
+            set { _alertShowInPanel = value; RequestRecalc(); }
+        }
+
+        private bool _alertPulseEffect = true;
+        [Display(GroupName = "9. Alerts", Name = "Pulse effect (animation)", Order = 110)]
+        public bool AlertPulseEffect
+        {
+            get => _alertPulseEffect;
+            set { _alertPulseEffect = value; RequestRecalc(); }
+        }
+        #endregion
+
         #region Constructor
         public GexBotClassicProfile()
         {
@@ -855,6 +962,21 @@ namespace ATAS.Indicators.Technical
                 s.Priors
             }).ToList();
 
+            // Detect alerts for unusual gamma changes
+            var alertedStrikes = new HashSet<decimal>();
+            if (_enableAlerts)
+            {
+                _activeAlerts = DetectAlerts(snapshot.Strikes);
+                foreach (var alert in _activeAlerts)
+                {
+                    alertedStrikes.Add(alert.Strike);
+                }
+            }
+            else
+            {
+                _activeAlerts.Clear();
+            }
+
             // Calculate scale
             double maxGex = convertedStrikes.Max(s => Math.Abs((double)s.GexValue));
             if (maxGex <= 0) maxGex = 1;
@@ -868,6 +990,14 @@ namespace ATAS.Indicators.Technical
             }
 
             var valueFont = new RenderFont("Arial", _valueFontSize);
+
+            // Pulse effect for alerts
+            double pulseAlpha = 1.0;
+            if (_alertPulseEffect && _activeAlerts.Count > 0)
+            {
+                var elapsed = (DateTime.Now - _lastPulseTime).TotalMilliseconds;
+                pulseAlpha = 0.5 + 0.5 * Math.Sin(elapsed / 200.0);
+            }
 
             // Draw GEX bars
             foreach (var strike in convertedStrikes)
@@ -884,6 +1014,10 @@ namespace ATAS.Indicators.Technical
                 var barColor = isPositive ? _positiveGexColor : _negativeGexColor;
                 var fillColor = Color.FromArgb(_fillOpacity, barColor);
 
+                // Check if this strike has an alert
+                var alertInfo = _activeAlerts.FirstOrDefault(a => a.Strike == strike.OriginalStrike);
+                bool hasAlert = alertInfo != null;
+
                 Rectangle barRect;
                 if (isPositive)
                 {
@@ -898,7 +1032,20 @@ namespace ATAS.Indicators.Technical
 
                 context.FillRectangle(fillColor, barRect);
 
-                if (_showBarOutline)
+                // Draw alert highlight or normal outline
+                if (hasAlert)
+                {
+                    var alertColor = alertInfo!.IsIncrease ? _alertIncreaseColor : _alertDecreaseColor;
+                    int alpha = _alertPulseEffect ? (int)(255 * pulseAlpha) : 255;
+                    var alertPen = new RenderPen(Color.FromArgb(alpha, alertColor), _alertOutlineThickness);
+                    context.DrawRectangle(alertPen, barRect);
+
+                    // Draw glow effect
+                    var glowRect = new Rectangle(barRect.X - 2, barRect.Y - 2, barRect.Width + 4, barRect.Height + 4);
+                    var glowPen = new RenderPen(Color.FromArgb(alpha / 3, alertColor), 1);
+                    context.DrawRectangle(glowPen, glowRect);
+                }
+                else if (_showBarOutline)
                 {
                     var outlinePen = new RenderPen(barColor, _outlineThickness);
                     context.DrawRectangle(outlinePen, barRect);
@@ -1018,9 +1165,12 @@ namespace ATAS.Indicators.Technical
             int col2 = 70;  // Strike column width
             int col3 = panelWidth - col1 - col2 - 30; // Value column
 
-            // Calculate total height based on content
+            // Calculate total height based on content (including alerts section if enabled)
             int numRows = 22; // Approximate rows including headers and spacing
-            int panelHeight = lineHeight * numRows + sectionGap * 5 + 30;
+            int alertRows = (_alertShowInPanel && _enableAlerts && _activeAlerts.Count > 0) 
+                ? Math.Min(_activeAlerts.Count, 5) + 2 // header + alerts + spacing
+                : 0;
+            int panelHeight = lineHeight * (numRows + alertRows) + sectionGap * 6 + 30;
 
             // Calculate position based on alignment
             int x, y;
@@ -1227,6 +1377,44 @@ namespace ATAS.Indicators.Technical
             }
             context.DrawString(dteText, fontSmall, dteColor, labelX, ty);
             context.DrawString($"/ {data.SecMinDte}DTE", fontSmall, Color.Gray, labelX + 50, ty);
+            ty += lineHeight + sectionGap;
+
+            // ═══════════════════════════════════════════════════════════
+            // SECTION: ALERTS (if enabled and there are active alerts)
+            // ═══════════════════════════════════════════════════════════
+            if (_alertShowInPanel && _enableAlerts && _activeAlerts.Count > 0)
+            {
+                var alertHeaderColor = Color.FromArgb(255, 255, 150, 50);
+                DrawSectionHeader(context, $"⚠ alerts ({_activeAlerts.Count})", x, ty, panelWidth, fontBold, alertHeaderColor);
+                ty += lineHeight + 4;
+
+                // Show up to 5 alerts
+                var displayAlerts = _activeAlerts.Take(5).ToList();
+                foreach (var alert in displayAlerts)
+                {
+                    var alertColor = alert.IsIncrease ? _alertIncreaseColor : _alertDecreaseColor;
+                    var arrow = alert.IsIncrease ? "▲" : "▼";
+
+                    // Strike with arrow
+                    context.DrawString($"{arrow} {alert.Strike:0}", font, alertColor, labelX, ty);
+
+                    // Change value
+                    context.DrawString(FormatCompact(alert.Change), font, alertColor, strikeX, ty);
+
+                    // Percentage
+                    var pctText = $"{(alert.ChangePercent >= 0 ? "+" : "")}{alert.ChangePercent:0.0}%";
+                    context.DrawString(pctText, fontSmall, alertColor, valueX, ty);
+
+                    ty += lineHeight;
+                }
+
+                // Show "more..." if there are more alerts
+                if (_activeAlerts.Count > 5)
+                {
+                    context.DrawString($"+{_activeAlerts.Count - 5} more...", fontSmall, Color.Gray, labelX, ty);
+                    ty += lineHeight;
+                }
+            }
         }
 
         private void DrawSectionHeader(RenderContext context, string title, int x, int y, int width, RenderFont font, Color color)
@@ -1373,6 +1561,163 @@ namespace ATAS.Indicators.Technical
             if (string.IsNullOrEmpty(text)) return 0;
             double factor = 0.58;
             return (int)Math.Ceiling(text.Length * (font.Size * factor));
+        }
+
+        private List<AlertInfo> DetectAlerts(List<GexStrike> strikes)
+        {
+            var alerts = new List<AlertInfo>();
+
+            // Get the priors index based on selected time period
+            int periodIndex = _alertTimePeriod switch
+            {
+                AlertTimePeriod.OneMin => 0,
+                AlertTimePeriod.FiveMin => 1,
+                AlertTimePeriod.TenMin => 2,
+                AlertTimePeriod.FifteenMin => 3,
+                AlertTimePeriod.ThirtyMin => 4,
+                _ => 1
+            };
+
+            string periodLabel = _alertTimePeriod switch
+            {
+                AlertTimePeriod.OneMin => "1min",
+                AlertTimePeriod.FiveMin => "5min",
+                AlertTimePeriod.TenMin => "10min",
+                AlertTimePeriod.FifteenMin => "15min",
+                AlertTimePeriod.ThirtyMin => "30min",
+                _ => "5min"
+            };
+
+            // Calculate changes for all strikes
+            var strikeChanges = new List<(GexStrike Strike, decimal CurrentGex, decimal PriorGex, decimal Change, decimal ChangePercent)>();
+
+            foreach (var strike in strikes)
+            {
+                if (strike.Priors.Length <= periodIndex) continue;
+
+                var currentGex = _dataSource == GexDataSource.Volume ? strike.GexByVolume : strike.GexByOI;
+                var priorGex = strike.Priors[periodIndex];
+                var change = currentGex - priorGex;
+
+                // Calculate percentage change (avoid division by zero)
+                decimal changePercent = 0;
+                if (priorGex != 0)
+                {
+                    changePercent = (change / Math.Abs(priorGex)) * 100m;
+                }
+                else if (currentGex != 0)
+                {
+                    changePercent = 100m; // 100% if went from 0 to something
+                }
+
+                strikeChanges.Add((strike, currentGex, priorGex, change, changePercent));
+            }
+
+            if (strikeChanges.Count == 0) return alerts;
+
+            // Apply threshold based on type
+            switch (_alertThresholdType)
+            {
+                case AlertThresholdType.Percentage:
+                    foreach (var sc in strikeChanges)
+                    {
+                        if (Math.Abs(sc.ChangePercent) >= _alertThresholdValue)
+                        {
+                            bool isIncrease = sc.Change > 0;
+                            if ((isIncrease && _alertOnIncrease) || (!isIncrease && _alertOnDecrease))
+                            {
+                                alerts.Add(new AlertInfo
+                                {
+                                    Strike = sc.Strike.Strike,
+                                    CurrentGex = sc.CurrentGex,
+                                    PriorGex = sc.PriorGex,
+                                    Change = sc.Change,
+                                    ChangePercent = sc.ChangePercent,
+                                    IsIncrease = isIncrease,
+                                    TimePeriod = periodLabel
+                                });
+                            }
+                        }
+                    }
+                    break;
+
+                case AlertThresholdType.AbsoluteValue:
+                    foreach (var sc in strikeChanges)
+                    {
+                        if (Math.Abs(sc.Change) >= _alertThresholdValue)
+                        {
+                            bool isIncrease = sc.Change > 0;
+                            if ((isIncrease && _alertOnIncrease) || (!isIncrease && _alertOnDecrease))
+                            {
+                                alerts.Add(new AlertInfo
+                                {
+                                    Strike = sc.Strike.Strike,
+                                    CurrentGex = sc.CurrentGex,
+                                    PriorGex = sc.PriorGex,
+                                    Change = sc.Change,
+                                    ChangePercent = sc.ChangePercent,
+                                    IsIncrease = isIncrease,
+                                    TimePeriod = periodLabel
+                                });
+                            }
+                        }
+                    }
+                    break;
+
+                case AlertThresholdType.TopN:
+                    int topN = (int)_alertThresholdValue;
+                    if (topN <= 0) topN = 3;
+
+                    // Get top N increases
+                    if (_alertOnIncrease)
+                    {
+                        var topIncreases = strikeChanges
+                            .Where(sc => sc.Change > 0)
+                            .OrderByDescending(sc => sc.Change)
+                            .Take(topN);
+
+                        foreach (var sc in topIncreases)
+                        {
+                            alerts.Add(new AlertInfo
+                            {
+                                Strike = sc.Strike.Strike,
+                                CurrentGex = sc.CurrentGex,
+                                PriorGex = sc.PriorGex,
+                                Change = sc.Change,
+                                ChangePercent = sc.ChangePercent,
+                                IsIncrease = true,
+                                TimePeriod = periodLabel
+                            });
+                        }
+                    }
+
+                    // Get top N decreases
+                    if (_alertOnDecrease)
+                    {
+                        var topDecreases = strikeChanges
+                            .Where(sc => sc.Change < 0)
+                            .OrderBy(sc => sc.Change)
+                            .Take(topN);
+
+                        foreach (var sc in topDecreases)
+                        {
+                            alerts.Add(new AlertInfo
+                            {
+                                Strike = sc.Strike.Strike,
+                                CurrentGex = sc.CurrentGex,
+                                PriorGex = sc.PriorGex,
+                                Change = sc.Change,
+                                ChangePercent = sc.ChangePercent,
+                                IsIncrease = false,
+                                TimePeriod = periodLabel
+                            });
+                        }
+                    }
+                    break;
+            }
+
+            // Sort alerts by absolute change (most significant first)
+            return alerts.OrderByDescending(a => Math.Abs(a.Change)).ToList();
         }
         #endregion
     }
