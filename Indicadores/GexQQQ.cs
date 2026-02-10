@@ -525,10 +525,46 @@ namespace ATAS.Indicators.Technical
             set { _showInfoPanel = value; RequestRecalc(); }
         }
 
-        public enum InfoPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
-        private InfoPanelAlign _infoPanelPosition = InfoPanelAlign.TopRight;
+        public enum PanelPosition
+        {
+            TopLeft, TopCenter, TopRight,
+            MiddleLeft, MiddleCenter, MiddleRight,
+            BottomLeft, BottomCenter, BottomRight
+        }
+
+        private (int x, int y) CalcPanelXY(PanelPosition pos, int panelWidth, int panelHeight, int offsetX, int offsetY)
+        {
+            int chartW = ChartInfo.Region.Width;
+            int chartH = ChartInfo.Region.Height;
+
+            int x = pos switch
+            {
+                PanelPosition.TopLeft or PanelPosition.MiddleLeft or PanelPosition.BottomLeft
+                    => offsetX,
+                PanelPosition.TopCenter or PanelPosition.MiddleCenter or PanelPosition.BottomCenter
+                    => (chartW - panelWidth) / 2 + offsetX,
+                PanelPosition.TopRight or PanelPosition.MiddleRight or PanelPosition.BottomRight
+                    => chartW - panelWidth - offsetX,
+                _ => offsetX
+            };
+
+            int y = pos switch
+            {
+                PanelPosition.TopLeft or PanelPosition.TopCenter or PanelPosition.TopRight
+                    => offsetY,
+                PanelPosition.MiddleLeft or PanelPosition.MiddleCenter or PanelPosition.MiddleRight
+                    => (chartH - panelHeight) / 2 + offsetY,
+                PanelPosition.BottomLeft or PanelPosition.BottomCenter or PanelPosition.BottomRight
+                    => chartH - panelHeight - offsetY,
+                _ => offsetY
+            };
+
+            return (x, y);
+        }
+
+        private PanelPosition _infoPanelPosition = PanelPosition.TopRight;
         [Display(GroupName = "07. 📋 Info Panel", Name = "Panel Position", Order = 15)]
-        public InfoPanelAlign InfoPanelPosition
+        public PanelPosition InfoPanelPosition
         {
             get => _infoPanelPosition;
             set { _infoPanelPosition = value; RequestRecalc(); }
@@ -1111,10 +1147,9 @@ namespace ATAS.Indicators.Technical
             set { _alertHistoryDisplayCount = Math.Clamp(value, 3, 20); RequestRecalc(); }
         }
 
-        public enum HistoryPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
-        private HistoryPanelAlign _alertHistoryPosition = HistoryPanelAlign.BottomRight;
+        private PanelPosition _alertHistoryPosition = PanelPosition.BottomRight;
         [Display(GroupName = "13. 📜 Alert History", Name = "Panel Position", Order = 50)]
-        public HistoryPanelAlign AlertHistoryPosition
+        public PanelPosition AlertHistoryPosition
         {
             get => _alertHistoryPosition;
             set { _alertHistoryPosition = value; RequestRecalc(); }
@@ -1527,10 +1562,9 @@ namespace ATAS.Indicators.Technical
             set { _showMultiTimeframePanel = value; RequestRecalc(); }
         }
 
-        public enum MtfPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
-        private MtfPanelAlign _mtfPanelPosition = MtfPanelAlign.BottomLeft;
+        private PanelPosition _mtfPanelPosition = PanelPosition.BottomLeft;
         [Display(GroupName = "16. ⏱️ Multi-Timeframe", Name = "Panel Position", Order = 20)]
-        public MtfPanelAlign MtfPanelPosition
+        public PanelPosition MtfPanelPosition
         {
             get => _mtfPanelPosition;
             set { _mtfPanelPosition = value; RequestRecalc(); }
@@ -2090,10 +2124,9 @@ namespace ATAS.Indicators.Technical
             set { _showStatisticsPanel = value; RequestRecalc(); }
         }
 
-        public enum StatsPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
-        private StatsPanelAlign _statsPanelPosition = StatsPanelAlign.TopLeft;
+        private PanelPosition _statsPanelPosition = PanelPosition.TopLeft;
         [Display(GroupName = "19. 📊 Statistics Panel", Name = "Panel Position", Order = 20)]
-        public StatsPanelAlign StatsPanelPosition
+        public PanelPosition StatsPanelPosition
         {
             get => _statsPanelPosition;
             set { _statsPanelPosition = value; RequestRecalc(); }
@@ -2258,10 +2291,9 @@ namespace ATAS.Indicators.Technical
             set { _showTargetPanel = value; RequestRecalc(); }
         }
 
-        public enum TargetPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
-        private TargetPanelAlign _targetPanelPosition = TargetPanelAlign.BottomLeft;
+        private PanelPosition _targetPanelPosition = PanelPosition.BottomLeft;
         [Display(GroupName = "20. 🎯 Price Targets", Name = "Panel Position", Order = 90)]
-        public TargetPanelAlign TargetPanelPosition
+        public PanelPosition TargetPanelPosition
         {
             get => _targetPanelPosition;
             set { _targetPanelPosition = value; RequestRecalc(); }
@@ -2495,10 +2527,9 @@ namespace ATAS.Indicators.Technical
             set { _showApiDiagnostics = value; RequestRecalc(); }
         }
 
-        public enum DiagPanelAlign { TopLeft, TopRight, BottomLeft, BottomRight }
-        private DiagPanelAlign _diagPanelPosition = DiagPanelAlign.BottomLeft;
+        private PanelPosition _diagPanelPosition = PanelPosition.BottomLeft;
         [Display(GroupName = "23. 🔌 API Diagnostics", Name = "Panel Position", Order = 20)]
-        public DiagPanelAlign DiagPanelPosition
+        public PanelPosition DiagPanelPosition
         {
             get => _diagPanelPosition;
             set { _diagPanelPosition = value; RequestRecalc(); }
@@ -3277,27 +3308,7 @@ namespace ATAS.Indicators.Technical
             int panelHeight = lineHeight * (numRows + alertRows) + sectionGap * 6 + 30;
 
             // Calculate position based on alignment
-            int x, y;
-            switch (_infoPanelPosition)
-            {
-                case InfoPanelAlign.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - _infoPanelX;
-                    y = _infoPanelY;
-                    break;
-                case InfoPanelAlign.BottomLeft:
-                    x = _infoPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _infoPanelY;
-                    break;
-                case InfoPanelAlign.BottomRight:
-                    x = ChartInfo.Region.Width - panelWidth - _infoPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _infoPanelY;
-                    break;
-                case InfoPanelAlign.TopLeft:
-                default:
-                    x = _infoPanelX;
-                    y = _infoPanelY;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_infoPanelPosition, panelWidth, panelHeight, _infoPanelX, _infoPanelY);
 
             // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -3536,27 +3547,7 @@ namespace ATAS.Indicators.Technical
             int panelHeight = lineHeight * (5 + extraRows) + 20;
 
             // Calculate position based on alignment
-            int x, y;
-            switch (_infoPanelPosition)
-            {
-                case InfoPanelAlign.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - _infoPanelX;
-                    y = _infoPanelY;
-                    break;
-                case InfoPanelAlign.BottomLeft:
-                    x = _infoPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _infoPanelY;
-                    break;
-                case InfoPanelAlign.BottomRight:
-                    x = ChartInfo.Region.Width - panelWidth - _infoPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _infoPanelY;
-                    break;
-                case InfoPanelAlign.TopLeft:
-                default:
-                    x = _infoPanelX;
-                    y = _infoPanelY;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_infoPanelPosition, panelWidth, panelHeight, _infoPanelX, _infoPanelY);
 
             // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -3645,27 +3636,7 @@ namespace ATAS.Indicators.Technical
             int panelHeight = headerHeight + (lineHeight * historySnapshot.Count) + 12;
 
             // Calculate position based on alignment
-            int x, y;
-            switch (_alertHistoryPosition)
-            {
-                case HistoryPanelAlign.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - _alertHistoryPanelX;
-                    y = _alertHistoryPanelY;
-                    break;
-                case HistoryPanelAlign.BottomLeft:
-                    x = _alertHistoryPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _alertHistoryPanelY;
-                    break;
-                case HistoryPanelAlign.BottomRight:
-                    x = ChartInfo.Region.Width - panelWidth - _alertHistoryPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _alertHistoryPanelY;
-                    break;
-                case HistoryPanelAlign.TopLeft:
-                default:
-                    x = _alertHistoryPanelX;
-                    y = _alertHistoryPanelY;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_alertHistoryPosition, panelWidth, panelHeight, _alertHistoryPanelX, _alertHistoryPanelY);
 
             // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -3750,27 +3721,7 @@ namespace ATAS.Indicators.Technical
             int panelHeight = headerHeight + (lineHeight * totalRows) + sectionGap * 3 + 15;
 
             // Calculate position based on alignment
-            int x, y;
-            switch (_mtfPanelPosition)
-            {
-                case MtfPanelAlign.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - _mtfPanelX;
-                    y = _mtfPanelY;
-                    break;
-                case MtfPanelAlign.BottomLeft:
-                    x = _mtfPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _mtfPanelY;
-                    break;
-                case MtfPanelAlign.BottomRight:
-                    x = ChartInfo.Region.Width - panelWidth - _mtfPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _mtfPanelY;
-                    break;
-                case MtfPanelAlign.TopLeft:
-                default:
-                    x = _mtfPanelX;
-                    y = _mtfPanelY;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_mtfPanelPosition, panelWidth, panelHeight, _mtfPanelX, _mtfPanelY);
 
             // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -4879,27 +4830,7 @@ namespace ATAS.Indicators.Technical
             int panelHeight = lineHeight * rowCount + 25;
 
             // Calculate position
-            int x, y;
-            switch (_statsPanelPosition)
-            {
-                case StatsPanelAlign.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - _statsPanelX;
-                    y = _statsPanelY;
-                    break;
-                case StatsPanelAlign.BottomLeft:
-                    x = _statsPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _statsPanelY;
-                    break;
-                case StatsPanelAlign.BottomRight:
-                    x = ChartInfo.Region.Width - panelWidth - _statsPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _statsPanelY;
-                    break;
-                case StatsPanelAlign.TopLeft:
-                default:
-                    x = _statsPanelX;
-                    y = _statsPanelY;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_statsPanelPosition, panelWidth, panelHeight, _statsPanelX, _statsPanelY);
 
             // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -5117,27 +5048,7 @@ namespace ATAS.Indicators.Technical
             int panelHeight = lineHeight * rowCount + 20;
 
             // Calculate position
-            int x, y;
-            switch (_targetPanelPosition)
-            {
-                case TargetPanelAlign.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - _targetPanelX;
-                    y = _targetPanelY;
-                    break;
-                case TargetPanelAlign.BottomLeft:
-                    x = _targetPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _targetPanelY;
-                    break;
-                case TargetPanelAlign.BottomRight:
-                    x = ChartInfo.Region.Width - panelWidth - _targetPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _targetPanelY;
-                    break;
-                case TargetPanelAlign.TopLeft:
-                default:
-                    x = _targetPanelX;
-                    y = _targetPanelY;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_targetPanelPosition, panelWidth, panelHeight, _targetPanelX, _targetPanelY);
 
             // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -5302,27 +5213,7 @@ namespace ATAS.Indicators.Technical
             int panelWidth = 200;
 
             // Calculate position
-            int x, y;
-            switch (_diagPanelPosition)
-            {
-                case DiagPanelAlign.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - _diagPanelX;
-                    y = _diagPanelY;
-                    break;
-                case DiagPanelAlign.BottomLeft:
-                    x = _diagPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _diagPanelY;
-                    break;
-                case DiagPanelAlign.BottomRight:
-                    x = ChartInfo.Region.Width - panelWidth - _diagPanelX;
-                    y = ChartInfo.Region.Height - panelHeight - _diagPanelY;
-                    break;
-                case DiagPanelAlign.TopLeft:
-                default:
-                    x = _diagPanelX;
-                    y = _diagPanelY;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_diagPanelPosition, panelWidth, panelHeight, _diagPanelX, _diagPanelY);
 
             // Draw background
             var backRect = new Rectangle(x, y, panelWidth, panelHeight);

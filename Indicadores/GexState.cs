@@ -222,7 +222,43 @@ namespace ATAS.Indicators.Technical
         #endregion
 
         #region Section 03: Panel Position
-        public enum PanelPosition { TopLeft, TopRight, BottomLeft, BottomRight, TopCenter, BottomCenter }
+        public enum PanelPosition
+        {
+            TopLeft, TopCenter, TopRight,
+            MiddleLeft, MiddleCenter, MiddleRight,
+            BottomLeft, BottomCenter, BottomRight
+        }
+
+        private (int x, int y) CalcPanelXY(PanelPosition pos, int panelWidth, int panelHeight, int offsetX, int offsetY)
+        {
+            int chartW = ChartInfo.Region.Width;
+            int chartH = ChartInfo.Region.Height;
+
+            int x = pos switch
+            {
+                PanelPosition.TopLeft or PanelPosition.MiddleLeft or PanelPosition.BottomLeft
+                    => offsetX,
+                PanelPosition.TopCenter or PanelPosition.MiddleCenter or PanelPosition.BottomCenter
+                    => (chartW - panelWidth) / 2 + offsetX,
+                PanelPosition.TopRight or PanelPosition.MiddleRight or PanelPosition.BottomRight
+                    => chartW - panelWidth - offsetX,
+                _ => offsetX
+            };
+
+            int y = pos switch
+            {
+                PanelPosition.TopLeft or PanelPosition.TopCenter or PanelPosition.TopRight
+                    => offsetY,
+                PanelPosition.MiddleLeft or PanelPosition.MiddleCenter or PanelPosition.MiddleRight
+                    => (chartH - panelHeight) / 2 + offsetY,
+                PanelPosition.BottomLeft or PanelPosition.BottomCenter or PanelPosition.BottomRight
+                    => chartH - panelHeight - offsetY,
+                _ => offsetY
+            };
+
+            return (x, y);
+        }
+
         private PanelPosition _panelPosition = PanelPosition.TopRight;
         [Display(GroupName = "03. 📍 Panel Position", Name = "Position", Description = "Dashboard panel location", Order = 10)]
         public PanelPosition DashboardPosition
@@ -848,13 +884,30 @@ namespace ATAS.Indicators.Technical
             set { _historyDisplayCount = Math.Clamp(value, 3, 20); RequestRecalc(); }
         }
 
-        public enum HistoryPosition { TopLeft, TopRight, BottomLeft, BottomRight }
-        private HistoryPosition _historyPanelPosition = HistoryPosition.BottomLeft;
+        private PanelPosition _historyPanelPosition = PanelPosition.BottomLeft;
         [Display(GroupName = "13. 📜 State History", Name = "History Panel Position", Order = 50)]
-        public HistoryPosition HistoryPanelPos
+        public PanelPosition HistoryPanelPos
         {
             get => _historyPanelPosition;
             set { _historyPanelPosition = value; RequestRecalc(); }
+        }
+
+        private int _historyPanelOffsetX = 10;
+        [Display(GroupName = "13. 📜 State History", Name = "History X Offset (px)", Order = 55)]
+        [Range(0, 2000)]
+        public int HistoryPanelOffsetX
+        {
+            get => _historyPanelOffsetX;
+            set { _historyPanelOffsetX = Math.Clamp(value, 0, 2000); RequestRecalc(); }
+        }
+
+        private int _historyPanelOffsetY = 10;
+        [Display(GroupName = "13. 📜 State History", Name = "History Y Offset (px)", Order = 56)]
+        [Range(0, 2000)]
+        public int HistoryPanelOffsetY
+        {
+            get => _historyPanelOffsetY;
+            set { _historyPanelOffsetY = Math.Clamp(value, 0, 2000); RequestRecalc(); }
         }
 
         private void TrimHistory()
@@ -915,6 +968,14 @@ namespace ATAS.Indicators.Technical
         {
             get => _showDiagnostics;
             set { _showDiagnostics = value; RequestRecalc(); }
+        }
+
+        private PanelPosition _diagPosition = PanelPosition.BottomRight;
+        [Display(GroupName = "15. 🔌 API Diagnostics", Name = "Panel Position", Order = 15)]
+        public PanelPosition DiagPosition
+        {
+            get => _diagPosition;
+            set { _diagPosition = value; RequestRecalc(); }
         }
 
         private bool _showLatency = true;
@@ -1886,23 +1947,7 @@ namespace ATAS.Indicators.Technical
             int lineHeight = 14;
             int panelHeight = Math.Min(_historyDisplayCount, _stateHistory.Count) * lineHeight + 30;
 
-            int x, y;
-            switch (_historyPanelPosition)
-            {
-                case HistoryPosition.TopLeft:
-                    x = 10; y = 50;
-                    break;
-                case HistoryPosition.TopRight:
-                    x = ChartInfo.Region.Width - panelWidth - 10; y = 50;
-                    break;
-                case HistoryPosition.BottomLeft:
-                    x = 10; y = ChartInfo.Region.Height - panelHeight - 10;
-                    break;
-                default:
-                    x = ChartInfo.Region.Width - panelWidth - 10;
-                    y = ChartInfo.Region.Height - panelHeight - 10;
-                    break;
-            }
+            var (x, y) = CalcPanelXY(_historyPanelPosition, panelWidth, panelHeight, _historyPanelOffsetX, _historyPanelOffsetY);
 
             // Background
             var rect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -1936,8 +1981,7 @@ namespace ATAS.Indicators.Technical
             int panelWidth = 180;
             int panelHeight = 80;
 
-            int x = ChartInfo.Region.Width - panelWidth - _diagnosticsPanelX;
-            int y = ChartInfo.Region.Height - panelHeight - _diagnosticsPanelY;
+            var (x, y) = CalcPanelXY(_diagPosition, panelWidth, panelHeight, _diagnosticsPanelX, _diagnosticsPanelY);
 
             // Background
             var rect = new Rectangle(x, y, panelWidth, panelHeight);
@@ -2032,37 +2076,7 @@ namespace ATAS.Indicators.Technical
 
         private void CalculatePanelPosition(out int x, out int y, int width, int height)
         {
-            switch (_panelPosition)
-            {
-                case PanelPosition.TopLeft:
-                    x = _panelOffsetX;
-                    y = _panelOffsetY;
-                    break;
-                case PanelPosition.TopRight:
-                    x = ChartInfo.Region.Width - width - _panelOffsetX;
-                    y = _panelOffsetY;
-                    break;
-                case PanelPosition.BottomLeft:
-                    x = _panelOffsetX;
-                    y = ChartInfo.Region.Height - height - _panelOffsetY;
-                    break;
-                case PanelPosition.BottomRight:
-                    x = ChartInfo.Region.Width - width - _panelOffsetX;
-                    y = ChartInfo.Region.Height - height - _panelOffsetY;
-                    break;
-                case PanelPosition.TopCenter:
-                    x = (ChartInfo.Region.Width - width) / 2;
-                    y = _panelOffsetY;
-                    break;
-                case PanelPosition.BottomCenter:
-                    x = (ChartInfo.Region.Width - width) / 2;
-                    y = ChartInfo.Region.Height - height - _panelOffsetY;
-                    break;
-                default:
-                    x = _panelOffsetX;
-                    y = _panelOffsetY;
-                    break;
-            }
+            (x, y) = CalcPanelXY(_panelPosition, width, height, _panelOffsetX, _panelOffsetY);
         }
 
         private int CalculateTrend()
