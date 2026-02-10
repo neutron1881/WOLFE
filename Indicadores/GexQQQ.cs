@@ -1819,8 +1819,9 @@ namespace ATAS.Indicators.Technical
             string fileName;
             if (_exportIncludeTimestamp)
             {
-                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                fileName = $"{_exportFilePrefix}_{ticker}_{timestamp}.{ext}";
+                // Use date only (yyyyMMdd) to create one file per day/session
+                var dateStamp = DateTime.Now.ToString("yyyyMMdd");
+                fileName = $"{_exportFilePrefix}_{ticker}_{dateStamp}.{ext}";
             }
             else
             {
@@ -1837,79 +1838,69 @@ namespace ATAS.Indicators.Technical
             try
             {
                 var filePath = GetExportFilePath();
+                bool fileExists = File.Exists(filePath);
 
-                // Check if appending to existing file
-                if (_exportAppendMode && !_exportIncludeTimestamp)
+                // Check file size limit for rotation
+                if (fileExists)
                 {
-                    // Check file size limit
-                    if (File.Exists(filePath))
+                    var fileInfo = new FileInfo(filePath);
+                    if (fileInfo.Length > _exportMaxFileSizeMB * 1024 * 1024)
                     {
-                        var fileInfo = new FileInfo(filePath);
-                        if (fileInfo.Length > _exportMaxFileSizeMB * 1024 * 1024)
-                        {
-                            // Rotate file - add timestamp
-                            var dir = Path.GetDirectoryName(filePath) ?? GetExportDirectory();
-                            var name = Path.GetFileNameWithoutExtension(filePath);
-                            var ext = Path.GetExtension(filePath);
-                            var rotatedPath = Path.Combine(dir, $"{name}_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
-                            File.Move(filePath, rotatedPath);
-                        }
+                        // Rotate file - add full timestamp to rotated file
+                        var dir = Path.GetDirectoryName(filePath) ?? GetExportDirectory();
+                        var name = Path.GetFileNameWithoutExtension(filePath);
+                        var ext = Path.GetExtension(filePath);
+                        var rotatedPath = Path.Combine(dir, $"{name}_rotated_{DateTime.Now:HHmmss}{ext}");
+                        File.Move(filePath, rotatedPath);
+                        fileExists = false;
                     }
                 }
 
                 var sb = new System.Text.StringBuilder();
                 var separator = _exportFormat == ExportFormat.CSV ? "," : "\t";
+                var currentTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
-                // Header (only for new files or non-append mode)
-                bool writeHeader = !_exportAppendMode || !File.Exists(filePath);
+                // Header (only for new files)
+                bool writeHeader = !fileExists;
 
                 if (writeHeader)
                 {
+                    // Column headers for the session-based cumulative format
                     var headers = new List<string>
                     {
-                        "ExportTime", "Ticker", "Spot", "ZeroGamma",
-                        "MajorPosVol", "MajorNegVol", "MajorPosOI", "MajorNegOI",
-                        "SumGexVol", "SumGexOI", "MinDTE", "SecMinDTE"
+                        "Timestamp", "RecordType", "Ticker", "Strike", "Spot", "ZeroGamma",
+                        "GexByVolume", "GexByOI", "MajorPosVol", "MajorNegVol",
+                        "MajorPosOI", "MajorNegOI", "SumGexVol", "SumGexOI",
+                        "MinDTE", "SecMinDTE"
                     };
-                    sb.AppendLine(string.Join(separator, headers));
-
-                    // Strike headers
-                    var strikeHeaders = new List<string> { "Strike", "GexByVolume", "GexByOI" };
                     if (_exportIncludePriors)
                     {
-                        strikeHeaders.AddRange(new[] { "Prior1Min", "Prior5Min", "Prior10Min", "Prior15Min", "Prior30Min" });
+                        headers.AddRange(new[] { "Prior1Min", "Prior5Min", "Prior10Min", "Prior15Min", "Prior30Min" });
                     }
-                    sb.AppendLine("--- STRIKES ---");
-                    sb.AppendLine(string.Join(separator, strikeHeaders));
+                    sb.AppendLine(string.Join(separator, headers));
                 }
 
-                // Summary row
-                var summaryRow = new List<string>
-                {
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                    data.Ticker,
-                    data.Spot.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.ZeroGamma.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.MajorPosVol.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.MajorNegVol.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.MajorPosOI.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.MajorNegOI.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.SumGexVol.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.SumGexOI.ToString("0.00", CultureInfo.InvariantCulture),
-                    data.MinDte.ToString(),
-                    data.SecMinDte.ToString()
-                };
-                sb.AppendLine(string.Join(separator, summaryRow));
-                sb.AppendLine();
-
-                // Strike data
+                // Export each strike as a row with timestamp (cumulative session data)
                 foreach (var strike in data.Strikes)
                 {
-                    var strikeRow = new List<string>
+                    var row = new List<string>
                     {
+                        currentTime,
+                        "STRIKE",
+                        data.Ticker,
                         strike.Strike.ToString("0", CultureInfo.InvariantCulture),
+                        data.Spot.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.ZeroGamma.ToString("0.00", CultureInfo.InvariantCulture),
                         strike.GexByVolume.ToString("0.00", CultureInfo.InvariantCulture),
-                        strike.GexByOI.ToString("0.00", CultureInfo.InvariantCulture)
+                        strike.GexByOI.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.MajorPosVol.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.MajorNegVol.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.MajorPosOI.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.MajorNegOI.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.SumGexVol.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.SumGexOI.ToString("0.00", CultureInfo.InvariantCulture),
+                        data.MinDte.ToString(),
+                        data.SecMinDte.ToString()
                     };
 
                     if (_exportIncludePriors)
@@ -1917,43 +1908,42 @@ namespace ATAS.Indicators.Technical
                         for (int i = 0; i < 5; i++)
                         {
                             var priorVal = strike.Priors.Length > i ? strike.Priors[i] : 0m;
-                            strikeRow.Add(priorVal.ToString("0.00", CultureInfo.InvariantCulture));
+                            row.Add(priorVal.ToString("0.00", CultureInfo.InvariantCulture));
                         }
                     }
 
-                    sb.AppendLine(string.Join(separator, strikeRow));
+                    sb.AppendLine(string.Join(separator, row));
                 }
 
                 // Export alerts if enabled
                 if (_exportIncludeAlerts && _activeAlerts.Count > 0)
                 {
-                    sb.AppendLine();
-                    sb.AppendLine("--- ACTIVE ALERTS ---");
-                    sb.AppendLine(string.Join(separator, new[] { "Strike", "Change", "ChangePercent", "Direction", "Period" }));
-
                     foreach (var alert in _activeAlerts)
                     {
                         var alertRow = new List<string>
                         {
+                            currentTime,
+                            "ALERT",
+                            data.Ticker,
                             alert.Strike.ToString("0", CultureInfo.InvariantCulture),
+                            data.Spot.ToString("0.00", CultureInfo.InvariantCulture),
+                            data.ZeroGamma.ToString("0.00", CultureInfo.InvariantCulture),
                             alert.Change.ToString("0.00", CultureInfo.InvariantCulture),
                             alert.ChangePercent.ToString("0.00", CultureInfo.InvariantCulture),
+                            "", "", "", "", "", "",
                             alert.IsIncrease ? "UP" : "DOWN",
                             alert.TimePeriod
                         };
+                        if (_exportIncludePriors)
+                        {
+                            alertRow.AddRange(new[] { "", "", "", "", "" });
+                        }
                         sb.AppendLine(string.Join(separator, alertRow));
                     }
                 }
 
-                // Write to file
-                if (_exportAppendMode && File.Exists(filePath))
-                {
-                    File.AppendAllText(filePath, sb.ToString());
-                }
-                else
-                {
-                    File.WriteAllText(filePath, sb.ToString());
-                }
+                // Always append to file (cumulative session data)
+                File.AppendAllText(filePath, sb.ToString());
 
                 _lastExportTime = DateTime.Now;
                 _lastExportFile = filePath;
@@ -3475,7 +3465,8 @@ namespace ATAS.Indicators.Technical
                     var changeColor = gexVal >= 0 ? _infoPanelAccentPositive : _infoPanelAccentNegative;
 
                     context.DrawString($"#{i + 1}", font, Color.Gray, labelX, ty);
-                    context.DrawString($"{strike.Strike:0}", font, Color.Cyan, strikeX, ty);
+                    // Strike color based on GEX value (positive=green, negative=red)
+                    context.DrawString($"{strike.Strike:0}", font, changeColor, strikeX, ty);
                     context.DrawString(FormatCompact(gexVal), font, changeColor, valueX, ty);
                     ty += lineHeight;
                 }
@@ -3859,8 +3850,8 @@ namespace ATAS.Indicators.Technical
                         // Period
                         context.DrawString(periodLabels[pc.Period], fontSmall, Color.Gray, periodCol, ty);
 
-                        // Strike
-                        context.DrawString($"{top.Strike:0}", font, Color.Cyan, changeCol, ty);
+                        // Strike - color based on change direction
+                        context.DrawString($"{top.Strike:0}", font, changeColor, changeCol, ty);
 
                         // Change
                         context.DrawString($"{arrow}{FormatCompact(top.Change)}", font, changeColor, pctCol, ty);
@@ -3887,8 +3878,8 @@ namespace ATAS.Indicators.Technical
                             var changeColor = mover.Change >= 0 ? _mtfPositiveColor : _mtfNegativeColor;
                             var arrow = mover.Change >= 0 ? "▲" : "▼";
 
-                            // Strike
-                            context.DrawString($"{mover.Strike:0}", font, Color.Cyan, strikeCol, ty);
+                            // Strike - color based on change direction
+                            context.DrawString($"{mover.Strike:0}", font, changeColor, strikeCol, ty);
 
                             // Change value
                             context.DrawString($"{arrow}{FormatCompact(mover.Change)}", font, changeColor, valCol, ty);
