@@ -427,6 +427,114 @@ namespace ATAS.Indicators.Technical
             get => _showMajorLabels;
             set { _showMajorLabels = value; RequestRecalc(); }
         }
+
+        // ── Call P1-P3 ──
+        private bool _showCallP1P2P3 = false;
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Show Call P1-P3", Description = "Show 2nd, 3rd, 4th highest positive gamma strikes", Order = 100)]
+        public bool ShowCallP1P2P3
+        {
+            get => _showCallP1P2P3;
+            set { _showCallP1P2P3 = value; RequestRecalc(); }
+        }
+
+        private Color _callP1Color = Color.FromArgb(200, 50, 205, 120);
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Call P1 Color", Order = 105)]
+        public Color CallP1Color
+        {
+            get => _callP1Color;
+            set { _callP1Color = value; RequestRecalc(); }
+        }
+
+        private Color _callP2Color = Color.FromArgb(180, 40, 180, 110);
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Call P2 Color", Order = 106)]
+        public Color CallP2Color
+        {
+            get => _callP2Color;
+            set { _callP2Color = value; RequestRecalc(); }
+        }
+
+        private Color _callP3Color = Color.FromArgb(160, 30, 155, 100);
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Call P3 Color", Order = 107)]
+        public Color CallP3Color
+        {
+            get => _callP3Color;
+            set { _callP3Color = value; RequestRecalc(); }
+        }
+
+        private int _callPLinesThickness = 1;
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Call P1-P3 Thickness", Order = 108)]
+        [Range(1, 10)]
+        public int CallPLinesThickness
+        {
+            get => _callPLinesThickness;
+            set { _callPLinesThickness = Math.Clamp(value, 1, 10); RequestRecalc(); }
+        }
+
+        private DashStyle _callPLinesDash = DashStyle.Dash;
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Call P1-P3 Dash Style", Order = 109)]
+        public DashStyle CallPLinesDash
+        {
+            get => _callPLinesDash;
+            set { _callPLinesDash = value; RequestRecalc(); }
+        }
+
+        // ── Put P1-P3 ──
+        private bool _showPutP1P2P3 = false;
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Show Put P1-P3", Description = "Show 2nd, 3rd, 4th most negative gamma strikes", Order = 110)]
+        public bool ShowPutP1P2P3
+        {
+            get => _showPutP1P2P3;
+            set { _showPutP1P2P3 = value; RequestRecalc(); }
+        }
+
+        private Color _putP1Color = Color.FromArgb(200, 230, 130, 60);
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Put P1 Color", Order = 115)]
+        public Color PutP1Color
+        {
+            get => _putP1Color;
+            set { _putP1Color = value; RequestRecalc(); }
+        }
+
+        private Color _putP2Color = Color.FromArgb(180, 210, 110, 50);
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Put P2 Color", Order = 116)]
+        public Color PutP2Color
+        {
+            get => _putP2Color;
+            set { _putP2Color = value; RequestRecalc(); }
+        }
+
+        private Color _putP3Color = Color.FromArgb(160, 190, 90, 40);
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Put P3 Color", Order = 117)]
+        public Color PutP3Color
+        {
+            get => _putP3Color;
+            set { _putP3Color = value; RequestRecalc(); }
+        }
+
+        private int _putPLinesThickness = 1;
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Put P1-P3 Thickness", Order = 118)]
+        [Range(1, 10)]
+        public int PutPLinesThickness
+        {
+            get => _putPLinesThickness;
+            set { _putPLinesThickness = Math.Clamp(value, 1, 10); RequestRecalc(); }
+        }
+
+        private DashStyle _putPLinesDash = DashStyle.Dash;
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Put P1-P3 Dash Style", Order = 119)]
+        public DashStyle PutPLinesDash
+        {
+            get => _putPLinesDash;
+            set { _putPLinesDash = value; RequestRecalc(); }
+        }
+
+        private bool _showP1P2P3Labels = true;
+        [Display(GroupName = "06. ➖ Major Levels", Name = "Show P1-P3 Labels", Order = 120)]
+        public bool ShowP1P2P3Labels
+        {
+            get => _showP1P2P3Labels;
+            set { _showP1P2P3Labels = value; RequestRecalc(); }
+        }
         #endregion
 
         #region 07. Spot Price
@@ -1275,31 +1383,68 @@ namespace ATAS.Indicators.Technical
             if (strikes.Count == 0) return;
             var labelFont = new RenderFont("Arial", 9);
 
-            if (_showMaxPosLine)
+            // Positive gamma ranked (calls)
+            var posRanked = strikes.Where(s => s.NetGamma > 0).OrderByDescending(s => s.NetGamma).ToList();
+            // Negative gamma ranked (puts)
+            var negRanked = strikes.Where(s => s.NetGamma < 0).OrderBy(s => s.NetGamma).ToList();
+
+            if (_showMaxPosLine && posRanked.Count > 0)
             {
-                var maxPos = strikes.Where(s => s.NetGamma > 0).OrderByDescending(s => s.NetGamma).FirstOrDefault();
-                if (maxPos != null)
+                var maxPos = posRanked[0];
+                var price = _enableConversion ? RoundToStep(maxPos.Strike * factor, _priceStep) : maxPos.Strike;
+                var y = ChartInfo.PriceChartContainer.GetYByPrice(price, false);
+                var pen = new RenderPen(_maxPosColor, _majorLinesThickness) { DashStyle = _majorLinesDash };
+                context.DrawLine(pen, 0, y, fullWidth, y);
+                if (_showMajorLabels)
+                    context.DrawString($"MAX+: {maxPos.Strike:0}", labelFont, _maxPosColor, 5, y - 12);
+            }
+
+            // Call P1-P3 (2nd, 3rd, 4th highest positive gamma)
+            if (_showCallP1P2P3)
+            {
+                Color[] callPColors = { _callP1Color, _callP2Color, _callP3Color };
+                string[] callPLabels = { "P1+", "P2+", "P3+" };
+                for (int i = 0; i < 3; i++)
                 {
-                    var price = _enableConversion ? RoundToStep(maxPos.Strike * factor, _priceStep) : maxPos.Strike;
+                    int rank = i + 1; // skip index 0 (MAX+)
+                    if (rank >= posRanked.Count) break;
+                    var s = posRanked[rank];
+                    var price = _enableConversion ? RoundToStep(s.Strike * factor, _priceStep) : s.Strike;
                     var y = ChartInfo.PriceChartContainer.GetYByPrice(price, false);
-                    var pen = new RenderPen(_maxPosColor, _majorLinesThickness) { DashStyle = _majorLinesDash };
+                    var pen = new RenderPen(callPColors[i], _callPLinesThickness) { DashStyle = _callPLinesDash };
                     context.DrawLine(pen, 0, y, fullWidth, y);
-                    if (_showMajorLabels)
-                        context.DrawString($"MAX+: {maxPos.Strike:0}", labelFont, _maxPosColor, 5, y - 12);
+                    if (_showP1P2P3Labels)
+                        context.DrawString($"{callPLabels[i]}: {s.Strike:0}", labelFont, callPColors[i], 5, y - 12);
                 }
             }
 
-            if (_showMaxNegLine)
+            if (_showMaxNegLine && negRanked.Count > 0)
             {
-                var maxNeg = strikes.Where(s => s.NetGamma < 0).OrderBy(s => s.NetGamma).FirstOrDefault();
-                if (maxNeg != null)
+                var maxNeg = negRanked[0];
+                var price = _enableConversion ? RoundToStep(maxNeg.Strike * factor, _priceStep) : maxNeg.Strike;
+                var y = ChartInfo.PriceChartContainer.GetYByPrice(price, false);
+                var pen = new RenderPen(_maxNegColor, _majorLinesThickness) { DashStyle = _majorLinesDash };
+                context.DrawLine(pen, 0, y, fullWidth, y);
+                if (_showMajorLabels)
+                    context.DrawString($"MAX-: {maxNeg.Strike:0}", labelFont, _maxNegColor, 5, y - 12);
+            }
+
+            // Put P1-P3 (2nd, 3rd, 4th most negative gamma)
+            if (_showPutP1P2P3)
+            {
+                Color[] putPColors = { _putP1Color, _putP2Color, _putP3Color };
+                string[] putPLabels = { "P1-", "P2-", "P3-" };
+                for (int i = 0; i < 3; i++)
                 {
-                    var price = _enableConversion ? RoundToStep(maxNeg.Strike * factor, _priceStep) : maxNeg.Strike;
+                    int rank = i + 1; // skip index 0 (MAX-)
+                    if (rank >= negRanked.Count) break;
+                    var s = negRanked[rank];
+                    var price = _enableConversion ? RoundToStep(s.Strike * factor, _priceStep) : s.Strike;
                     var y = ChartInfo.PriceChartContainer.GetYByPrice(price, false);
-                    var pen = new RenderPen(_maxNegColor, _majorLinesThickness) { DashStyle = _majorLinesDash };
+                    var pen = new RenderPen(putPColors[i], _putPLinesThickness) { DashStyle = _putPLinesDash };
                     context.DrawLine(pen, 0, y, fullWidth, y);
-                    if (_showMajorLabels)
-                        context.DrawString($"MAX-: {maxNeg.Strike:0}", labelFont, _maxNegColor, 5, y - 12);
+                    if (_showP1P2P3Labels)
+                        context.DrawString($"{putPLabels[i]}: {s.Strike:0}", labelFont, putPColors[i], 5, y - 12);
                 }
             }
 
