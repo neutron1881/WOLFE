@@ -7,11 +7,12 @@ namespace GexBotA.Services;
 /// <summary>
 /// Async HTTP client for fetching GEX data from the Gexbot Classic API.
 /// Uses SemaphoreSlim for async-safe single-flight, stream-based JSON parsing,
-/// and timestamp-based change detection to minimize allocations and redraws.
+/// timestamp-based change detection, and exponential backoff on consecutive failures.
 /// </summary>
 public sealed class GexApiClient : IDisposable
 {
     private const string BaseUrl = "https://api.gexbot.com/";
+    private const int MaxBackoffSeconds = 60;
 
     private readonly HttpClient _httpClient;
     private readonly SemaphoreSlim _fetchGate = new(1, 1);
@@ -21,6 +22,45 @@ public sealed class GexApiClient : IDisposable
     private long _lastClassicTimestamp;
     private long _lastMajorsTimestamp;
 
+    // Exponential backoff state
+    private int _consecutiveFailures;
+    private DateTime _lastSuccessUtc = DateTime.UtcNow;
+
+    // Request stats (readable from indicator for info panel)
+    private long _totalRequests;
+    private long _totalErrors;
+    private DateTime _statsResetUtc = DateTime.UtcNow;
+
+    /// <summary>Number of consecutive fetch failures (resets on success).</summary>
+    public int ConsecutiveFailures => _consecutiveFailures;
+
+    /// <summary>Total requests made since last stats reset.</summary>
+    public long TotalRequests => _totalRequests;
+
+    /// <summary>Total errors since last stats reset.</summary>
+    public long TotalErrors => _totalErrors;
+
+    /// <summary>Time since last successful fetch.</summary>
+    public TimeSpan TimeSinceLastSuccess => DateTime.UtcNow - _lastSuccessUtc;
+
+    /// <summary>Requests per hour since stats reset.</summary>
+    public double RequestsPerHour
+    {
+        get
+        {
+            double hours = (DateTime.UtcNow - _statsResetUtc).TotalHours;
+            return hours > 0.001 ? _totalRequests / hours : 0;
+        }
+    }
+
+    /// <summary>
+    /// Returns the current backoff delay in seconds based on consecutive failures.
+    /// Uses exponential backoff: 2^failures seconds, capped at MaxBackoffSeconds.
+    /// Returns 0 if no backoff is needed.
+    /// </summary>
+    public int CurrentBackoffSeconds =>
+        _consecutiveFailures == 0 ? 0 : Math.Min((int)Math.Pow(2, _consecutiveFailures), MaxBackoffSeconds);
+
     public GexApiClient()
     {
         _httpClient = new HttpClient
@@ -28,13 +68,14 @@ public sealed class GexApiClient : IDisposable
             BaseAddress = new Uri(BaseUrl),
             Timeout = TimeSpan.FromSeconds(10)
         };
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "GexBotA-ATAS/1.0");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "GexBotA-ATAS/2.5");
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
     }
 
     /// <summary>
     /// Fetches full classic GEX data (histogram + levels + priors).
     /// Returns null on error; returns cached data if a fetch is already in-flight.
+    /// Implements exponential backoff on consecutive failures.
     /// </summary>
     public async Task<GexClassicData?> FetchClassicAsync(
         string ticker, string aggregation, string apiKey, CancellationToken ct = default)
@@ -44,6 +85,8 @@ public sealed class GexApiClient : IDisposable
 
         try
         {
+            Interlocked.Increment(ref _totalRequests);
+
             var url = $"{ticker}/classic/{aggregation}?key={apiKey}";
             using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
                 .ConfigureAwait(false);
@@ -57,6 +100,8 @@ public sealed class GexApiClient : IDisposable
             {
                 _cachedClassic = data;
                 _lastClassicTimestamp = data.Timestamp;
+                _consecutiveFailures = 0;
+                _lastSuccessUtc = DateTime.UtcNow;
             }
 
             return data;
@@ -64,6 +109,8 @@ public sealed class GexApiClient : IDisposable
         catch (OperationCanceledException) { throw; }
         catch
         {
+            Interlocked.Increment(ref _totalErrors);
+            _consecutiveFailures++;
             return _cachedClassic;
         }
         finally
@@ -128,6 +175,7 @@ public sealed class GexApiClient : IDisposable
 
     /// <summary>
     /// Clears all cached data, forcing a re-fetch on next call.
+    /// Resets backoff state so the next fetch is immediate.
     /// </summary>
     public void ClearCache()
     {
@@ -135,6 +183,17 @@ public sealed class GexApiClient : IDisposable
         _cachedMajors = null;
         _lastClassicTimestamp = 0;
         _lastMajorsTimestamp = 0;
+        _consecutiveFailures = 0;
+    }
+
+    /// <summary>
+    /// Resets request/error counters for the stats display.
+    /// </summary>
+    public void ResetStats()
+    {
+        Interlocked.Exchange(ref _totalRequests, 0);
+        Interlocked.Exchange(ref _totalErrors, 0);
+        _statsResetUtc = DateTime.UtcNow;
     }
 
     #region Parsing

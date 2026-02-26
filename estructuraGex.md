@@ -1,7 +1,7 @@
 # GexBotA Classic — Informe Técnico de Auditoría
 
 **Producto:** GexBotA Classic  
-**Versión:** Full-Beta-1.0  
+**Versión:** v2.5  
 **Fecha:** Julio 2025  
 **Plataforma objetivo:** ATAS (OrderFlow Trading)  
 **Repositorio:** `https://github.com/neutron1881/WOLFE` (rama `Full-Beta-1.0`)  
@@ -1231,4 +1231,141 @@ Solo si Gexbot soporta el ticker. Actualmente la lista de tickers disponibles in
 
 ---
 
-*Fin del documento. Versión Full-Beta-1.0.*
+*Fin del documento. Versión v2.5.*
+
+---
+---
+
+# CHANGELOG — v2.5
+
+---
+
+## Mejoras implementadas en esta versión
+
+### 1. Exponential Backoff en GexApiClient
+
+**Problema:** Si la API de Gexbot se caía o devolvía errores, el cliente reintentaba cada segundo sin pausa, generando tráfico innecesario y potenciales 429 (rate limit).
+
+**Solución:** Backoff exponencial nativo (sin Polly):
+- Contador `_consecutiveFailures` incrementa en cada error, se resetea a 0 en cada éxito.
+- Delay antes de reintentar: `2^failures` segundos, capped a 60s.
+- Secuencia: 0s → 2s → 4s → 8s → 16s → 32s → 60s → 60s...
+- `ClearCache()` resetea el backoff para re-fetch inmediato al cambiar ticker.
+
+```
+Fallo 1 → espera 2s
+Fallo 2 → espera 4s
+Fallo 3 → espera 8s
+Fallo 4 → espera 16s
+Fallo 5 → espera 32s
+Fallo 6+ → espera 60s (cap)
+Éxito → reset a 0
+```
+
+### 2. Request Stats en GexApiClient
+
+**Nuevas propiedades públicas** para monitoreo desde el info panel:
+
+| Propiedad | Tipo | Descripción |
+|---|---|---|
+| `TotalRequests` | `long` | Requests totales desde inicio |
+| `TotalErrors` | `long` | Errores totales desde inicio |
+| `RequestsPerHour` | `double` | Tasa calculada de requests/hora |
+| `ConsecutiveFailures` | `int` | Fallos consecutivos actuales |
+| `CurrentBackoffSeconds` | `int` | Delay actual de backoff |
+| `TimeSinceLastSuccess` | `TimeSpan` | Tiempo desde último éxito |
+
+Contadores thread-safe con `Interlocked.Increment`.
+
+### 3. Health Indicator en Info Panel
+
+**Columna 1 ampliada** con indicador de estado de conexión:
+
+```
+● LIVE  142req  420/h          ← Verde, todo OK
+⚠ STALE  142req  420/h         ← Rojo, sin datos hace >3 min
+⚠ 3 fails (backoff 8s)         ← Naranja, backoff activo
+```
+
+- **LIVE (●):** Datos recibidos en los últimos 3 minutos.
+- **STALE (⚠):** Sin datos nuevos durante 3+ minutos → posible problema de API.
+- **Backoff warning:** Muestra fallos consecutivos y delay actual.
+
+### 4. Stale Data Detection
+
+**Campo `_lastDataReceivedUtc`** se actualiza en cada fetch exitoso con datos nuevos. El info panel compara con `DateTime.UtcNow` para detectar datos desactualizados.
+
+Umbral configurable: `StaleDataThresholdMin = 3` (constante, modificable en código).
+
+### 5. Alert 5: Gamma Flip (Zero Gamma Crossover)
+
+**Nueva alerta** que detecta el cambio de régimen más importante en el mercado de gamma:
+
+> **¿Qué es un Gamma Flip?** Es el momento en que Zero Gamma cruza el Spot price, cambiando el régimen del mercado de gamma positiva (movimientos amortiguados, mean-reversion) a gamma negativa (movimientos amplificados, tendencia) o viceversa.
+
+**Algoritmo:**
+```
+1. Almacenar _previousZeroGamma del fetch anterior
+2. Comparar: ¿ZG estaba por debajo de Spot y ahora está por encima? (o viceversa)
+3. Si hay crossover → determinar dirección:
+   - Bullish Flip: ZG cruza bajo Spot → régimen Gamma+ (mean-reversion)
+   - Bearish Flip: ZG cruza sobre Spot → régimen Gamma− (tendencia)
+4. Cooldown: 10 minutos
+```
+
+**Settings:**
+
+| Setting | Default | Descripción |
+|---|---|---|
+| Gamma Flip Alert | ✅ On | Toggle de la alerta |
+| Cooldown (min) | 10 | Anti-spam entre flips |
+
+**Colores del overlay:**
+- 🟦 **Teal** para Bullish Flip (entrando en gamma positiva)
+- 🟪 **Magenta** para Bearish Flip (entrando en gamma negativa)
+
+**Mensaje ejemplo:**
+```
+🔄 GAMMA FLIP ALCISTA (Régimen Gamma+): Zero Gamma cruzó bajo Spot.
+Entrando en régimen de gamma positiva: movimientos amortiguados,
+mean-reversion favorecida. ZG=5285, Spot=5320
+```
+
+**Qué hacer cuando suena:**
+
+| Dirección | Régimen | Acción |
+|---|---|---|
+| **Bullish Flip** | Gamma+ | Favorecer reversiones, scalps contra-tendencia. Los MM compran dips y venden rips. |
+| **Bearish Flip** | Gamma− | Favorecer seguimiento de tendencia. Los MM amplifican el movimiento, stops más amplios. |
+
+### 6. User-Agent Actualizado
+
+Cambiado de `GexBotA-ATAS/1.0` a `GexBotA-ATAS/2.5` para tracking de versiones en logs de API.
+
+### 7. Spot Label en Info Panel
+
+El Spot en la columna de Update ahora muestra el precio del **ticker de la API** (raw) en lugar del precio convertido al chart, consistente con los strike labels y key level labels.
+
+---
+
+## Resumen de Alertas — v2.5
+
+| # | Nombre | Detecta | Color | Cooldown |
+|---|---|---|---|---|
+| 1 | Agotamiento Alcista | Rally sin gamma arriba | 🔴 Rojo | 5 min |
+| 2 | Efecto Imán | Bloque masivo de Call Gamma concentrado | 🟢 Verde | 10 min |
+| 3 | Liquidación Institucional | Caída de gamma en Major+ | 🟡 Naranja | 15 min |
+| 4 | Muro Gamma Negativo | Vacío debajo de Major− | 🔵 Azul | 5 min |
+| 5 | **Gamma Flip** | **Zero Gamma cruza Spot** | **🟦/🟪 Teal/Magenta** | **10 min** |
+
+---
+
+## Métricas de Código Actualizadas — v2.5
+
+| Métrica | v1.0 | v2.5 | Delta |
+|---|---|---|---|
+| `GexBotAClassic.cs` | 2,154 | ~2,350 | +196 |
+| `GexApiClient.cs` | 247 | ~310 | +63 |
+| Algoritmos de alerta | 4 | 5 | +1 |
+| Propiedades configurables | 60+ | 63+ | +3 |
+| Líneas totales (productivas) | ~2,472 | ~2,731 | +259 |

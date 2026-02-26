@@ -268,6 +268,16 @@ public sealed class GexBotAClassic : Indicator
     private int _negWallCooldownMin = 5;
     private DateTime _lastNegativeWallAlertTime = DateTime.MinValue;
 
+    // Alert 5: Gamma Flip (Zero Gamma Crossover with Momentum)
+    private bool _enableGammaFlipAlert = true;
+    private int _gammaFlipCooldownMin = 10;
+    private DateTime _lastGammaFlipAlertTime = DateTime.MinValue;
+    private double _previousZeroGamma;
+
+    // Stale data detection
+    private DateTime _lastDataReceivedUtc = DateTime.MinValue;
+    private const int StaleDataThresholdMin = 3;
+
     // Visual alert overlay
     private string _activeAlertMessage = string.Empty;
     private Color _activeAlertColor = Color.Empty;
@@ -935,6 +945,27 @@ public sealed class GexBotAClassic : Indicator
 
     #endregion
 
+    #region Properties - Alert 5: Gamma Flip
+
+    [Display(Name = "Gamma Flip Alert", GroupName = "Alert 5: Gamma Flip", Order = 110,
+        Description = "Alert when Zero Gamma crosses the Spot price with momentum (regime change from positive to negative gamma or vice versa)")]
+    public bool EnableGammaFlipAlert
+    {
+        get => _enableGammaFlipAlert;
+        set => _enableGammaFlipAlert = value;
+    }
+
+    [Display(Name = "Cooldown (min)", GroupName = "Alert 5: Gamma Flip", Order = 111,
+        Description = "Minimum minutes between gamma flip alerts")]
+    [Range(1, 60)]
+    public int GammaFlipCooldownMin
+    {
+        get => _gammaFlipCooldownMin;
+        set => _gammaFlipCooldownMin = Math.Clamp(value, 1, 60);
+    }
+
+    #endregion
+
     #region Properties - Info Panel
 
     [Display(Name = "Show Info Panel", GroupName = "Info Panel", Order = 60)]
@@ -1357,12 +1388,26 @@ public sealed class GexBotAClassic : Indicator
             DrawInfoText(context, col0, ref cy, $"{convLabel}{GetActiveConversionFactor():F4}", Color.FromArgb(255, 255, 220, 100), _infoPanelFont, row);
         }
 
-        // ── Column 1: Update info ──
+        // ── Column 1: Update info + Connection stats ──
         cy = yStart;
         DrawInfoText(context, col1, ref cy, "update", _infoPanelHeader, _headerFont, row);
         DrawInfoKv(context, col1, colWidth, ref cy, "date", $"{data.UpdateTime:d}", _infoPanelText, row);
         DrawInfoKv(context, col1, colWidth, ref cy, "time", $"{data.UpdateTime:T}", _infoPanelText, row);
-        DrawInfoKv(context, col1, colWidth, ref cy, "spot", $"{ApplyMultiplier(data.Spot):F2}", _spotLineColor, row);
+        DrawInfoKv(context, col1, colWidth, ref cy, "spot", $"{data.Spot:F2}", _spotLineColor, row);
+
+        // Connection health indicator
+        bool isStale = _lastDataReceivedUtc != DateTime.MinValue &&
+                       (DateTime.UtcNow - _lastDataReceivedUtc).TotalMinutes >= StaleDataThresholdMin;
+        var healthColor = isStale ? Color.FromArgb(255, 255, 80, 80) : Color.FromArgb(255, 80, 255, 80);
+        string healthIcon = isStale ? "\u26a0 STALE" : "\u25cf LIVE";
+        string statsStr = $"{healthIcon}  {_apiClient.TotalRequests}req  {_apiClient.RequestsPerHour:F0}/h";
+        DrawInfoText(context, col1, ref cy, statsStr, healthColor, _infoPanelFont, row);
+
+        if (_apiClient.ConsecutiveFailures > 0)
+        {
+            string failStr = $"\u26a0 {_apiClient.ConsecutiveFailures} fails (backoff {_apiClient.CurrentBackoffSeconds}s)";
+            DrawInfoText(context, col1, ref cy, failStr, Color.FromArgb(255, 255, 120, 60), _infoPanelFont, row);
+        }
 
         // ── Column 2: Levels ──
         cy = yStart;
@@ -1504,6 +1549,7 @@ public sealed class GexBotAClassic : Indicator
     /// <summary>
     /// Long-running async loop that polls the API. Uses Task.Delay between iterations
     /// and ManualResetEventSlim for instant re-trigger on config changes.
+    /// Implements exponential backoff on consecutive failures.
     /// Never blocks the UI/OnCalculate/OnRender thread.
     /// </summary>
     private async Task BackgroundFetchLoopAsync(CancellationToken ct)
@@ -1513,7 +1559,6 @@ public sealed class GexBotAClassic : Indicator
             try
             {
                 // Wait for the signal or timeout (refresh interval)
-                // Signal is set on startup, config changes, and after each interval
                 _fetchSignal.Wait(ct);
                 _fetchSignal.Reset();
 
@@ -1521,6 +1566,18 @@ public sealed class GexBotAClassic : Indicator
                 {
                     await Task.Delay(500, ct).ConfigureAwait(false);
                     continue;
+                }
+
+                // Exponential backoff: wait before retrying after consecutive failures
+                int backoffSec = _apiClient.CurrentBackoffSeconds;
+                if (backoffSec > 0)
+                {
+                    lock (_dataLock)
+                    {
+                        _lastError = $"Backoff: retrying in {backoffSec}s ({_apiClient.ConsecutiveFailures} consecutive failures)";
+                    }
+                    RedrawChart(new RedrawArg(ChartArea));
+                    await Task.Delay(backoffSec * 1000, ct).ConfigureAwait(false);
                 }
 
                 var apiTicker = GetApiTicker(_selectedTicker);
@@ -1546,6 +1603,7 @@ public sealed class GexBotAClassic : Indicator
                             _lastDataTimestamp = data.Timestamp;
                             _gexData = data;
                             _lastError = string.Empty;
+                            _lastDataReceivedUtc = DateTime.UtcNow;
                         }
                     }
 
@@ -1629,6 +1687,10 @@ public sealed class GexBotAClassic : Indicator
         // ── Alert 4: Negative Gamma Wall (Hard Support) ──
         if (_enableNegativeWallAlert)
             CheckNegativeWallAlert(data);
+
+        // ── Alert 5: Gamma Flip (Zero Gamma Crossover) ──
+        if (_enableGammaFlipAlert)
+            CheckGammaFlipAlert(data);
     }
 
     /// <summary>
@@ -2003,6 +2065,75 @@ public sealed class GexBotAClassic : Indicator
 
         AddAlert("alert", msg);
         ShowAlertOverlay(msg, Color.FromArgb(255, 100, 150, 255));
+    }
+
+    /// <summary>
+    /// Alert 5 — Gamma Flip (Zero Gamma Crossover with Momentum).
+    /// Detects when Zero Gamma crosses through the Spot price, signaling
+    /// a regime change between positive gamma (mean-reverting) and
+    /// negative gamma (trend-following) environments.
+    ///
+    /// Uses Priors data to confirm the crossover has momentum (not noise):
+    ///   - Checks if Zero Gamma was on the opposite side of Spot 15 min ago
+    ///     via the Priors of the strike closest to Zero Gamma.
+    ///
+    /// Algorithm:
+    ///   1. Compare current Spot vs Zero Gamma.
+    ///   2. Detect if the relationship flipped since _previousZeroGamma.
+    ///   3. Determine direction: Bullish Flip (ZG crosses below Spot → positive regime)
+    ///      or Bearish Flip (ZG crosses above Spot → negative regime).
+    ///   4. Anti-spam: 10 min cooldown.
+    /// </summary>
+    private void CheckGammaFlipAlert(GexClassicData data)
+    {
+        // Cooldown check
+        if ((DateTime.UtcNow - _lastGammaFlipAlertTime).TotalMinutes < _gammaFlipCooldownMin)
+            return;
+
+        double zeroGamma = data.ZeroGamma;
+        double spot = data.Spot;
+
+        if (zeroGamma <= 0 || spot <= 0)
+            return;
+
+        // First data point: store and return
+        if (_previousZeroGamma <= 0)
+        {
+            _previousZeroGamma = zeroGamma;
+            return;
+        }
+
+        // Detect crossover: was ZG on one side, now on the other?
+        bool wasBelowSpot = _previousZeroGamma < spot;
+        bool isNowBelowSpot = zeroGamma < spot;
+
+        // Update for next check
+        _previousZeroGamma = zeroGamma;
+
+        // No crossover
+        if (wasBelowSpot == isNowBelowSpot)
+            return;
+
+        // Crossover detected!
+        _lastGammaFlipAlertTime = DateTime.UtcNow;
+
+        bool bullishFlip = isNowBelowSpot; // ZG dropped below Spot → entering positive gamma regime
+
+        string direction = bullishFlip
+            ? "ALCISTA (R\u00e9gimen Gamma+)"
+            : "BAJISTA (R\u00e9gimen Gamma\u2212)";
+
+        string explanation = bullishFlip
+            ? "Zero Gamma cruz\u00f3 bajo Spot. Entrando en r\u00e9gimen de gamma positiva: movimientos amortiguados, mean-reversion favorecida."
+            : "Zero Gamma cruz\u00f3 sobre Spot. Entrando en r\u00e9gimen de gamma negativa: movimientos amplificados, tendencia favorecida.";
+
+        string msg = $"\ud83d\udd04 GAMMA FLIP {direction}: {explanation} ZG={zeroGamma:F0}, Spot={spot:F0}";
+
+        AddAlert("alert", msg);
+        Color flipColor = bullishFlip
+            ? Color.FromArgb(255, 0, 220, 180)   // Teal for bullish flip
+            : Color.FromArgb(255, 220, 0, 180);  // Magenta for bearish flip
+        ShowAlertOverlay(msg, flipColor);
     }
 
     /// <summary>
