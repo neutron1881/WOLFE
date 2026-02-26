@@ -232,12 +232,47 @@ public sealed class GexBotAClassic : Indicator
     private Color _infoPanelText = Color.White;
     private Color _infoPanelHeader = Color.FromArgb(255, 140, 140, 140);
 
-    // Alerts
+    // Alerts - general
     private bool _enableAlerts = true;
     private bool _alertedMajorPos;
     private bool _alertedMajorNeg;
     private double _lastAlertSpot;
     private long _lastDataTimestamp;
+
+    // Alert 1: Bullish Exhaustion
+    private bool _enableBullishExhaustion = true;
+    private int _exhaustionScanStrikes = 5;
+    private double _exhaustionThresholdPct = 15.0;
+    private int _exhaustionCooldownMin = 5;
+    private DateTime _lastBullishExhaustionTime = DateTime.MinValue;
+
+    // Alert 2: Magnet Effect (Efecto Imán)
+    private bool _enableMagnetAlert = true;
+    private double _magnetConcentrationPct = 40.0;
+    private int _magnetCooldownMin = 10;
+    private DateTime _lastMagnetAlertTime = DateTime.MinValue;
+    private bool _wasAboveZeroGamma; // crossing state for edge detection
+
+    // Alert 3: Institutional Liquidation (Gamma Drop)
+    private bool _enableLiquidationAlert = true;
+    private double _liquidationDropPct = 30.0;
+    private int _liquidationProximityTicks = 10;
+    private int _liquidationCooldownMin = 15;
+    private DateTime _lastLiquidationAlertTime = DateTime.MinValue;
+
+    // Alert 4: Negative Gamma Wall (Hard Support)
+    private bool _enableNegativeWallAlert = true;
+    private int _negWallScanStrikes = 5;
+    private double _negWallVacuumPct = 10.0;
+    private int _negWallProximityTicks = 15;
+    private int _negWallCooldownMin = 5;
+    private DateTime _lastNegativeWallAlertTime = DateTime.MinValue;
+
+    // Visual alert overlay
+    private string _activeAlertMessage = string.Empty;
+    private Color _activeAlertColor = Color.Empty;
+    private DateTime _alertMessageExpiry = DateTime.MinValue;
+    private const int AlertDisplaySeconds = 30;
 
     #endregion
 
@@ -734,11 +769,168 @@ public sealed class GexBotAClassic : Indicator
         set { _spotLineColor = value; RebuildPens(); RecalculateValues(); }
     }
 
-    [Display(Name = "Enable Alerts", GroupName = "Misc", Order = 56)]
+    #endregion
+
+    #region Properties - Alert 1: Agotamiento
+
+    [Display(Name = "Enable Alerts", GroupName = "Alert 1: Agotamiento", Order = 70,
+        Description = "Master toggle for all alert types")]
     public bool EnableAlerts
     {
         get => _enableAlerts;
         set => _enableAlerts = value;
+    }
+
+    [Display(Name = "Bullish Exhaustion", GroupName = "Alert 1: Agotamiento", Order = 71,
+        Description = "Alert when price crosses above Major Positive and there is no Gamma above to sustain the rally")]
+    public bool EnableBullishExhaustion
+    {
+        get => _enableBullishExhaustion;
+        set => _enableBullishExhaustion = value;
+    }
+
+    [Display(Name = "Scan Strikes", GroupName = "Alert 1: Agotamiento", Order = 72,
+        Description = "Number of strikes above spot to scan for remaining Gamma (default 5)")]
+    [Range(2, 20)]
+    public int ExhaustionScanStrikes
+    {
+        get => _exhaustionScanStrikes;
+        set => _exhaustionScanStrikes = Math.Clamp(value, 2, 20);
+    }
+
+    [Display(Name = "Threshold %", GroupName = "Alert 1: Agotamiento", Order = 73,
+        Description = "If Gamma above is less than this % of Major Positive, fire alert (default 15%)")]
+    [Range(1, 50)]
+    public double ExhaustionThresholdPct
+    {
+        get => _exhaustionThresholdPct;
+        set => _exhaustionThresholdPct = Math.Clamp(value, 1, 50);
+    }
+
+    [Display(Name = "Cooldown (min)", GroupName = "Alert 1: Agotamiento", Order = 74,
+        Description = "Minimum minutes between repeated exhaustion alerts (anti-spam)")]
+    [Range(1, 60)]
+    public int ExhaustionCooldownMin
+    {
+        get => _exhaustionCooldownMin;
+        set => _exhaustionCooldownMin = Math.Clamp(value, 1, 60);
+    }
+
+    #endregion
+
+    #region Properties - Alert 2: Efecto Imán
+
+    [Display(Name = "Magnet Alert", GroupName = "Alert 2: Efecto Im\u00e1n", Order = 80,
+        Description = "Alert when price breaks above Zero Gamma and a massive Call Gamma block acts as magnet above")]
+    public bool EnableMagnetAlert
+    {
+        get => _enableMagnetAlert;
+        set => _enableMagnetAlert = value;
+    }
+
+    [Display(Name = "Concentration %", GroupName = "Alert 2: Efecto Im\u00e1n", Order = 81,
+        Description = "Target strike must represent at least this % of total Gamma above to qualify as magnet (default 40%)")]
+    [Range(10, 80)]
+    public double MagnetConcentrationPct
+    {
+        get => _magnetConcentrationPct;
+        set => _magnetConcentrationPct = Math.Clamp(value, 10, 80);
+    }
+
+    [Display(Name = "Cooldown (min)", GroupName = "Alert 2: Efecto Im\u00e1n", Order = 82,
+        Description = "Minimum minutes between magnet alerts, or until price falls below Zero Gamma again")]
+    [Range(1, 60)]
+    public int MagnetCooldownMin
+    {
+        get => _magnetCooldownMin;
+        set => _magnetCooldownMin = Math.Clamp(value, 1, 60);
+    }
+
+    #endregion
+
+    #region Properties - Alert 3: Liquidaciones
+
+    [Display(Name = "Liquidation Alert", GroupName = "Alert 3: Liquidaciones", Order = 90,
+        Description = "Alert when institutional players close options at Major Positive, causing a sudden Gamma drop")]
+    public bool EnableLiquidationAlert
+    {
+        get => _enableLiquidationAlert;
+        set => _enableLiquidationAlert = value;
+    }
+
+    [Display(Name = "Drop %", GroupName = "Alert 3: Liquidaciones", Order = 91,
+        Description = "Minimum Gamma drop from 15 min ago to trigger alert (default 30% = wall lost 30%+ of strength)")]
+    [Range(10, 80)]
+    public double LiquidationDropPct
+    {
+        get => _liquidationDropPct;
+        set => _liquidationDropPct = Math.Clamp(value, 10, 80);
+    }
+
+    [Display(Name = "Proximity (ticks)", GroupName = "Alert 3: Liquidaciones", Order = 92,
+        Description = "Spot must be within this many ticks of Major Positive to monitor for liquidation")]
+    [Range(1, 50)]
+    public int LiquidationProximityTicks
+    {
+        get => _liquidationProximityTicks;
+        set => _liquidationProximityTicks = Math.Clamp(value, 1, 50);
+    }
+
+    [Display(Name = "Cooldown (min)", GroupName = "Alert 3: Liquidaciones", Order = 93,
+        Description = "Minimum minutes between liquidation alerts (structural alert, default 15 min)")]
+    [Range(1, 60)]
+    public int LiquidationCooldownMin
+    {
+        get => _liquidationCooldownMin;
+        set => _liquidationCooldownMin = Math.Clamp(value, 1, 60);
+    }
+
+    #endregion
+
+    #region Properties - Alert 4: Muro Negativo
+
+    [Display(Name = "Negative Wall Alert", GroupName = "Alert 4: Muro Negativo", Order = 100,
+        Description = "Alert when price falls towards Major Negative and there is no Gamma below (hard support / bounce zone)")]
+    public bool EnableNegativeWallAlert
+    {
+        get => _enableNegativeWallAlert;
+        set => _enableNegativeWallAlert = value;
+    }
+
+    [Display(Name = "Scan Strikes Below", GroupName = "Alert 4: Muro Negativo", Order = 101,
+        Description = "Number of strikes below Major Negative to scan for vacuum (default 5)")]
+    [Range(2, 20)]
+    public int NegWallScanStrikes
+    {
+        get => _negWallScanStrikes;
+        set => _negWallScanStrikes = Math.Clamp(value, 2, 20);
+    }
+
+    [Display(Name = "Vacuum Threshold %", GroupName = "Alert 4: Muro Negativo", Order = 102,
+        Description = "If absolute Gamma below is less than this % of Major Negative, it is a vacuum (default 10%)")]
+    [Range(1, 30)]
+    public double NegWallVacuumPct
+    {
+        get => _negWallVacuumPct;
+        set => _negWallVacuumPct = Math.Clamp(value, 1, 30);
+    }
+
+    [Display(Name = "Proximity (ticks)", GroupName = "Alert 4: Muro Negativo", Order = 103,
+        Description = "Spot must be within this many ticks above Major Negative to trigger (default 15)")]
+    [Range(1, 100)]
+    public int NegWallProximityTicks
+    {
+        get => _negWallProximityTicks;
+        set => _negWallProximityTicks = Math.Clamp(value, 1, 100);
+    }
+
+    [Display(Name = "Cooldown (min)", GroupName = "Alert 4: Muro Negativo", Order = 104,
+        Description = "Minimum minutes between negative wall alerts")]
+    [Range(1, 60)]
+    public int NegWallCooldownMin
+    {
+        get => _negWallCooldownMin;
+        set => _negWallCooldownMin = Math.Clamp(value, 1, 60);
     }
 
     #endregion
@@ -897,6 +1089,9 @@ public sealed class GexBotAClassic : Indicator
         // Process alerts
         if (_enableAlerts)
             ProcessAlerts(data);
+
+        // Draw visual alert overlay (if active)
+        DrawAlertOverlay(context, fullRect);
     }
 
     #endregion
@@ -1087,25 +1282,25 @@ public sealed class GexBotAClassic : Indicator
         if (_showZeroGammaLine && _zeroGammaPen != null)
         {
             decimal zg = ApplyMultiplier(data.ZeroGamma);
-            DrawHorizontalLine(context, zg, _zeroGammaPen, "Zero Γ", _zeroLineColor, chartRect);
+            DrawHorizontalLine(context, zg, _zeroGammaPen, "Zero Γ", data.ZeroGamma, _zeroLineColor, chartRect);
         }
 
         double majorPos = useVolume ? data.MajorPosVol : data.MajorPosOi;
         double majorNeg = useVolume ? data.MajorNegVol : data.MajorNegOi;
 
         if (_showMajorPositive && _majorPosPen != null)
-            DrawHorizontalLine(context, ApplyMultiplier(majorPos), _majorPosPen, "Major+", _majorPosColor, chartRect);
+            DrawHorizontalLine(context, ApplyMultiplier(majorPos), _majorPosPen, "Major+", majorPos, _majorPosColor, chartRect);
 
         if (_showMajorNegative && _majorNegPen != null)
-            DrawHorizontalLine(context, ApplyMultiplier(majorNeg), _majorNegPen, "Major−", _majorNegColor, chartRect);
+            DrawHorizontalLine(context, ApplyMultiplier(majorNeg), _majorNegPen, "Major−", majorNeg, _majorNegColor, chartRect);
 
         if (_showSpotLine && _spotPen != null)
-            DrawHorizontalLine(context, ApplyMultiplier(data.Spot), _spotPen, "Spot", _spotLineColor, chartRect);
+            DrawHorizontalLine(context, ApplyMultiplier(data.Spot), _spotPen, "Spot", data.Spot, _spotLineColor, chartRect);
     }
 
-    private void DrawHorizontalLine(RenderContext context, decimal price, RenderPen pen, string label, Color labelColor, Rectangle chartRect)
+    private void DrawHorizontalLine(RenderContext context, decimal chartPrice, RenderPen pen, string label, double tickerPrice, Color labelColor, Rectangle chartRect)
     {
-        int y = PriceToY(price);
+        int y = PriceToY(chartPrice);
         if (y < chartRect.Top || y > chartRect.Bottom)
             return;
 
@@ -1113,7 +1308,7 @@ public sealed class GexBotAClassic : Indicator
 
         if (_labelFont != null)
         {
-            string text = $"{label} {price:F2}";
+            string text = $"{label} {tickerPrice:F2}";
             var sz = context.MeasureString(text, _labelFont);
             var bgRect = new Rectangle(chartRect.Left + 4, y - sz.Height - 2, sz.Width + 6, sz.Height + 2);
             context.FillRectangle(Color.FromArgb(190, 0, 0, 0), bgRect);
@@ -1211,6 +1406,62 @@ public sealed class GexBotAClassic : Indicator
         var valRect = new Rectangle(x, y, colW - 20, rowH);
         context.DrawString(val, _infoPanelFont, valColor, valRect, rightFmt);
         y += rowH;
+    }
+
+    #endregion
+
+    #region Rendering - Alert Overlay
+
+    /// <summary>
+    /// Draws a floating alert message box at the top-right of the chart.
+    /// Auto-fades after AlertDisplaySeconds.
+    /// </summary>
+    private void DrawAlertOverlay(RenderContext context, Rectangle chartRect)
+    {
+        if (string.IsNullOrEmpty(_activeAlertMessage))
+            return;
+
+        if (DateTime.UtcNow > _alertMessageExpiry)
+        {
+            _activeAlertMessage = string.Empty;
+            return;
+        }
+
+        if (_headerFont == null || _infoPanelFont == null)
+            return;
+
+        // Calculate fade: full opacity for first 20s, then fade out
+        double remaining = (_alertMessageExpiry - DateTime.UtcNow).TotalSeconds;
+        int alpha = remaining > 10 ? 230 : (int)(230 * remaining / 10);
+        alpha = Math.Clamp(alpha, 0, 230);
+
+        // Background
+        int maxW = Math.Min(550, chartRect.Width - 20);
+        var sz = context.MeasureString(_activeAlertMessage, _infoPanelFont);
+        int boxW = Math.Min(sz.Width + 24, maxW);
+        int lines = (int)Math.Ceiling((double)sz.Width / (maxW - 24)) + 1;
+        int boxH = 18 + lines * 14;
+
+        int bx = chartRect.Right - boxW - 10;
+        int by = chartRect.Top + (_showInfoPanel ? _infoPanelHeight + 8 : 8);
+
+        var bgColor = Color.FromArgb(alpha, 40, 10, 10);
+        var borderColor = Color.FromArgb(alpha, _activeAlertColor.R, _activeAlertColor.G, _activeAlertColor.B);
+
+        var boxRect = new Rectangle(bx, by, boxW, boxH);
+        context.FillRectangle(bgColor, boxRect);
+
+        // Border (top accent line)
+        context.FillRectangle(borderColor, new Rectangle(bx, by, boxW, 3));
+
+        // Title
+        var titleColor = Color.FromArgb(alpha, _activeAlertColor.R, _activeAlertColor.G, _activeAlertColor.B);
+        context.DrawString("\u26a0 GexBotA Alert", _headerFont, titleColor, bx + 8, by + 5);
+
+        // Message (word-wrapped via rectangle)
+        var msgColor = Color.FromArgb(alpha, 255, 255, 255);
+        var msgRect = new Rectangle(bx + 8, by + 20, boxW - 16, boxH - 24);
+        context.DrawString(_activeAlertMessage, _infoPanelFont, msgColor, msgRect, new RenderStringFormat());
     }
 
     #endregion
@@ -1339,6 +1590,7 @@ public sealed class GexBotAClassic : Indicator
         decimal majorNeg = ApplyMultiplier(useVolume ? data.MajorNegVol : data.MajorNegOi);
         decimal tolerance = (InstrumentInfo != null ? InstrumentInfo.TickSize : 0.01m) * 5;
 
+        // ── Spot touching Major Positive ──
         if (Math.Abs(spot - majorPos) <= tolerance)
         {
             if (!_alertedMajorPos || Math.Abs((double)spot - _lastAlertSpot) > (double)tolerance)
@@ -1350,16 +1602,417 @@ public sealed class GexBotAClassic : Indicator
         }
         else _alertedMajorPos = false;
 
+        // ── Spot touching Major Negative ──
         if (Math.Abs(spot - majorNeg) <= tolerance)
         {
             if (!_alertedMajorNeg || Math.Abs((double)spot - _lastAlertSpot) > (double)tolerance)
             {
                 _alertedMajorNeg = true;
                 _lastAlertSpot = (double)spot;
-                AddAlert("alert", $"GexBotA: Spot ({spot:F2}) touching Major− ({majorNeg:F2})");
+                AddAlert("alert", $"GexBotA: Spot ({spot:F2}) touching Major\u2212 ({majorNeg:F2})");
             }
         }
         else _alertedMajorNeg = false;
+
+        // ── Alert 1: Bullish Exhaustion ──
+        if (_enableBullishExhaustion)
+            CheckBullishExhaustionAlert(data);
+
+        // ── Alert 2: Magnet Effect (Efecto Imán) ──
+        if (_enableMagnetAlert)
+            CheckMagnetAlert(data);
+
+        // ── Alert 3: Institutional Liquidation (Gamma Drop) ──
+        if (_enableLiquidationAlert)
+            CheckLiquidationAlert(data);
+
+        // ── Alert 4: Negative Gamma Wall (Hard Support) ──
+        if (_enableNegativeWallAlert)
+            CheckNegativeWallAlert(data);
+    }
+
+    /// <summary>
+    /// Alert 1 — Bullish Exhaustion (Agotamiento Alcista).
+    /// Detects when price crosses above Major Positive Gamma but there is
+    /// insufficient Gamma above to sustain the rally (liquidity void).
+    ///
+    /// Algorithm:
+    ///   1. Find the Major Positive strike and its GEX value in the strikes array.
+    ///   2. Check if Spot is above Major Positive strike (price crossed above).
+    ///   3. Take the next N strikes above Spot and sum their GEX.
+    ///   4. If sum &lt; threshold% of Major Positive GEX → fire exhaustion alert.
+    ///   5. Anti-spam cooldown prevents re-firing within N minutes.
+    /// </summary>
+    private void CheckBullishExhaustionAlert(GexClassicData data)
+    {
+        // Cooldown check first (cheapest gate)
+        if ((DateTime.UtcNow - _lastBullishExhaustionTime).TotalMinutes < _exhaustionCooldownMin)
+            return;
+
+        if (data.Strikes.Count < 3)
+            return;
+
+        bool useVolume = _gexType == GexType.Volume;
+
+        // 1. Identify Major Positive strike price
+        double majorPosStrike = useVolume ? data.MajorPosVol : data.MajorPosOi;
+        if (majorPosStrike <= 0)
+            return;
+
+        // Find the GEX value at the Major Positive strike
+        double majorPosGex = data.Strikes
+            .Where(s => Math.Abs(s.Strike - majorPosStrike) < 0.01)
+            .Select(s => useVolume ? s.GexByVolume : s.GexByOi)
+            .FirstOrDefault();
+
+        // Fallback: if exact strike not found, use the highest positive GEX
+        if (majorPosGex <= 0)
+        {
+            var maxPositive = data.Strikes
+                .Select(s => (s.Strike, Gex: useVolume ? s.GexByVolume : s.GexByOi))
+                .Where(x => x.Gex > 0)
+                .OrderByDescending(x => x.Gex)
+                .FirstOrDefault();
+
+            if (maxPositive.Gex <= 0)
+                return;
+
+            majorPosStrike = maxPositive.Strike;
+            majorPosGex = maxPositive.Gex;
+        }
+
+        // 2. Check if Spot has crossed above the Major Positive
+        if (data.Spot <= majorPosStrike)
+            return;
+
+        // 3. Scan the next N strikes immediately above the Spot price
+        var strikesAboveSpot = data.Strikes
+            .Where(s => s.Strike > data.Spot)
+            .OrderBy(s => s.Strike)
+            .Take(_exhaustionScanStrikes)
+            .ToList();
+
+        // If there are zero strikes above, that itself is total exhaustion
+
+        // 4. Sum the GEX of those strikes
+        double gammaAboveSum = strikesAboveSpot
+            .Sum(s => useVolume ? s.GexByVolume : s.GexByOi);
+
+        // 5. Exhaustion condition: sum < threshold% of Major Positive GEX
+        double threshold = majorPosGex * (_exhaustionThresholdPct / 100.0);
+
+        if (gammaAboveSum < threshold)
+        {
+            _lastBullishExhaustionTime = DateTime.UtcNow;
+
+            string gammaAboveStr = FormatGexValue(gammaAboveSum);
+            string majorPosStr = FormatGexValue(majorPosGex);
+            double pct = majorPosGex > 0 ? (gammaAboveSum / majorPosGex * 100) : 0;
+            int scanned = strikesAboveSpot.Count;
+
+            string msg = $"\u26a0\ufe0f BULLISH EXHAUSTION: Spot ({data.Spot:F2}) above Major+ ({majorPosStrike:F0}). " +
+                         $"Gamma above: {gammaAboveStr} ({pct:F1}% of Major+ {majorPosStr}, {scanned} strikes scanned). " +
+                         $"Likely reversal (Fade).";
+
+            // Fire ATAS alert (sound + alert window)
+            AddAlert("alert", msg);
+
+            // Set visual overlay on chart
+            ShowAlertOverlay(msg, Color.FromArgb(255, 255, 80, 80));
+        }
+    }
+
+    /// <summary>
+    /// Alert 2 — Magnet Effect / Efecto Imán (Continuación Alcista).
+    /// Detects when price breaks above Zero Gamma and a concentrated block of
+    /// positive Gamma above acts as a magnet attracting the price upward.
+    ///
+    /// Algorithm:
+    ///   1. Edge detection: Spot just crossed Zero Gamma upward (was below, now above).
+    ///   2. Scan all strikes above Spot and sum their positive GEX.
+    ///   3. Find the single strike with the highest GEX (the Target / magnet).
+    ///   4. If Target GEX > concentration% of total GEX above → massive concentrated magnet.
+    ///   5. Fire alert with the target strike.
+    ///   6. Anti-spam: cooldown OR price falls back below Zero Gamma to re-arm.
+    /// </summary>
+    private void CheckMagnetAlert(GexClassicData data)
+    {
+        bool useVolume = _gexType == GexType.Volume;
+        double zeroGamma = data.ZeroGamma;
+
+        if (zeroGamma <= 0)
+            return;
+
+        bool isAboveZeroGamma = data.Spot > zeroGamma;
+
+        // If price fell back below Zero Gamma, reset the crossing state (re-arm)
+        if (!isAboveZeroGamma)
+        {
+            _wasAboveZeroGamma = false;
+            return;
+        }
+
+        // 1. Edge detection: only fire on the transition from below to above
+        bool justCrossedUp = isAboveZeroGamma && !_wasAboveZeroGamma;
+        _wasAboveZeroGamma = true;
+
+        // Cooldown gate (skip if not a fresh crossing AND cooldown hasn't expired)
+        if (!justCrossedUp &&
+            (DateTime.UtcNow - _lastMagnetAlertTime).TotalMinutes < _magnetCooldownMin)
+            return;
+
+        // Even on a fresh crossing, respect the cooldown
+        if ((DateTime.UtcNow - _lastMagnetAlertTime).TotalMinutes < _magnetCooldownMin)
+            return;
+
+        if (data.Strikes.Count < 3)
+            return;
+
+        // 2. Scan all strikes above Spot with positive (Call) Gamma
+        var strikesAbove = data.Strikes
+            .Where(s => s.Strike > data.Spot)
+            .Select(s => (s.Strike, Gex: useVolume ? s.GexByVolume : s.GexByOi))
+            .Where(x => x.Gex > 0) // only positive Gamma acts as magnet
+            .OrderByDescending(x => x.Gex)
+            .ToList();
+
+        if (strikesAbove.Count == 0)
+            return;
+
+        // 3. Total positive Gamma above and the Target (highest single strike)
+        double totalGammaAbove = strikesAbove.Sum(x => x.Gex);
+        var target = strikesAbove[0]; // already sorted descending
+
+        if (totalGammaAbove <= 0)
+            return;
+
+        // 4. Concentration check: Target must represent > threshold% of total above
+        double concentrationPct = target.Gex / totalGammaAbove * 100.0;
+
+        if (concentrationPct < _magnetConcentrationPct)
+            return;
+
+        // 5. Fire the alert!
+        _lastMagnetAlertTime = DateTime.UtcNow;
+
+        string targetGexStr = FormatGexValue(target.Gex);
+        string totalStr = FormatGexValue(totalGammaAbove);
+
+        string msg = $"\ud83d\ude80 V\u00cdA LIBRE: Quiebre del Zero Gamma ({zeroGamma:F0}) confirmado. " +
+                     $"Fuerte Gamma Positiva actuando como im\u00e1n en Strike {target.Strike:F0} " +
+                     $"({targetGexStr}, {concentrationPct:F0}% de {totalStr} total arriba). " +
+                     $"Continuaci\u00f3n alcista probable.";
+
+        AddAlert("alert", msg);
+        ShowAlertOverlay(msg, Color.FromArgb(255, 80, 200, 120));
+    }
+
+    /// <summary>
+    /// Alert 3 — Institutional Liquidation (Gamma Drop).
+    /// Detects when the Gamma at the Major Positive strike has dropped drastically
+    /// compared to 15 minutes ago while the price is near that level.
+    /// This signals that institutional players are closing their option positions,
+    /// weakening the "wall" and making a reversal highly likely.
+    ///
+    /// Uses the existing Priors array from the API:
+    ///   Priors[3] = GEX value 15 minutes ago for each strike.
+    ///
+    /// Algorithm:
+    ///   1. Identify the Major Positive strike and its current GEX value.
+    ///   2. Check if Spot is within N ticks of that strike (proximity).
+    ///   3. Read the 15-min prior GEX from Priors[3] for that strike.
+    ///   4. If current GEX &lt; (100 - dropPct)% of the 15-min value → liquidation detected.
+    ///   5. Anti-spam: 15 min cooldown (structural alert).
+    /// </summary>
+    private void CheckLiquidationAlert(GexClassicData data)
+    {
+        // Cooldown check first
+        if ((DateTime.UtcNow - _lastLiquidationAlertTime).TotalMinutes < _liquidationCooldownMin)
+            return;
+
+        if (data.Strikes.Count < 3)
+            return;
+
+        bool useVolume = _gexType == GexType.Volume;
+
+        // 1. Identify Major Positive strike
+        double majorPosStrike = useVolume ? data.MajorPosVol : data.MajorPosOi;
+        if (majorPosStrike <= 0)
+            return;
+
+        // Find the StrikeData at the Major Positive
+        var majorStrikeData = data.Strikes
+            .FirstOrDefault(s => Math.Abs(s.Strike - majorPosStrike) < 0.01);
+
+        if (majorStrikeData == null)
+            return;
+
+        double currentGex = useVolume ? majorStrikeData.GexByVolume : majorStrikeData.GexByOi;
+
+        // Must have positive Gamma currently to be a valid wall
+        if (currentGex <= 0)
+            return;
+
+        // 2. Proximity check: Spot must be near the Major Positive
+        decimal tickSize = InstrumentInfo != null ? InstrumentInfo.TickSize : 0.01m;
+        double proximityDistance = (double)(tickSize * _liquidationProximityTicks);
+
+        // Apply conversion factor to Major Positive for chart comparison
+        double majorPosConverted = (double)ApplyMultiplier(majorPosStrike);
+        double spotConverted = (double)ApplyMultiplier(data.Spot);
+
+        if (Math.Abs(spotConverted - majorPosConverted) > proximityDistance)
+            return;
+
+        // 3. Read the 15-min prior GEX (Priors[3] = 15 min lookback)
+        const int Prior15MinIndex = 3;
+        if (majorStrikeData.Priors.Count <= Prior15MinIndex)
+            return;
+
+        double gex15MinAgo = majorStrikeData.Priors[Prior15MinIndex];
+
+        // Need valid positive historical data to compare against
+        if (gex15MinAgo <= 0)
+            return;
+
+        // 4. Liquidation condition: current GEX dropped > dropPct% from 15 min ago
+        double retainedPct = currentGex / gex15MinAgo * 100.0;
+        double dropPct = 100.0 - retainedPct;
+
+        if (dropPct < _liquidationDropPct)
+            return;
+
+        // 5. Fire the alert!
+        _lastLiquidationAlertTime = DateTime.UtcNow;
+
+        string currentStr = FormatGexValue(currentGex);
+        string priorStr = FormatGexValue(gex15MinAgo);
+
+        string msg = $"\ud83d\udcb8 LIQUIDACI\u00d3N INSTITUCIONAL: La Gamma en Major+ ({majorPosStrike:F0}) " +
+                     $"ha ca\u00eddo un {dropPct:F0}% en 15 min ({priorStr} \u2192 {currentStr}). " +
+                     $"Muro debilit\u00e1ndose, alta probabilidad de reversi\u00f3n.";
+
+        AddAlert("alert", msg);
+        ShowAlertOverlay(msg, Color.FromArgb(255, 255, 180, 50));
+    }
+
+    /// <summary>
+    /// Alert 4 — Negative Gamma Wall / Muro de Soporte Duro.
+    /// Detects when the price is falling towards the Major Negative Gamma and
+    /// there is virtually no Gamma below that level (total vacuum), making it
+    /// the last line of defense for market makers → extreme bounce probability.
+    ///
+    /// Algorithm:
+    ///   1. Identify the Major Negative strike and its GEX value (most negative).
+    ///   2. Check if Spot is within N ticks above Major Negative (approaching from above).
+    ///   3. Scan the next N strikes below Major Negative.
+    ///   4. Sum their absolute GEX. If it is &lt; vacuumPct% of |Major Negative GEX| → vacuum.
+    ///   5. Fire alert with tight stop-loss implication.
+    /// </summary>
+    private void CheckNegativeWallAlert(GexClassicData data)
+    {
+        // Cooldown check
+        if ((DateTime.UtcNow - _lastNegativeWallAlertTime).TotalMinutes < _negWallCooldownMin)
+            return;
+
+        if (data.Strikes.Count < 3)
+            return;
+
+        bool useVolume = _gexType == GexType.Volume;
+
+        // 1. Identify Major Negative strike
+        double majorNegStrike = useVolume ? data.MajorNegVol : data.MajorNegOi;
+        if (majorNegStrike <= 0)
+            return;
+
+        // Find the StrikeData at the Major Negative and get its GEX value
+        var majorNegData = data.Strikes
+            .FirstOrDefault(s => Math.Abs(s.Strike - majorNegStrike) < 0.01);
+
+        double majorNegGex;
+        if (majorNegData != null)
+        {
+            majorNegGex = useVolume ? majorNegData.GexByVolume : majorNegData.GexByOi;
+        }
+        else
+        {
+            // Fallback: find the most negative GEX strike
+            var mostNeg = data.Strikes
+                .Select(s => (s.Strike, Gex: useVolume ? s.GexByVolume : s.GexByOi))
+                .Where(x => x.Gex < 0)
+                .OrderBy(x => x.Gex)
+                .FirstOrDefault();
+
+            if (mostNeg.Gex >= 0)
+                return;
+
+            majorNegStrike = mostNeg.Strike;
+            majorNegGex = mostNeg.Gex;
+        }
+
+        // Must be negative Gamma for a valid put wall
+        if (majorNegGex >= 0)
+            return;
+
+        double absMajorNegGex = Math.Abs(majorNegGex);
+
+        // 2. Proximity check: Spot must be approaching from above
+        //    (Spot is above Major Negative but within N ticks)
+        decimal tickSize = InstrumentInfo != null ? InstrumentInfo.TickSize : 0.01m;
+        double proximityDistance = (double)(tickSize * _negWallProximityTicks);
+
+        double majorNegConverted = (double)ApplyMultiplier(majorNegStrike);
+        double spotConverted = (double)ApplyMultiplier(data.Spot);
+
+        double distanceAbove = spotConverted - majorNegConverted;
+
+        // Spot must be above Major Negative (approaching) and within proximity
+        if (distanceAbove < 0 || distanceAbove > proximityDistance)
+            return;
+
+        // 3. Scan the next N strikes BELOW the Major Negative
+        var strikesBelow = data.Strikes
+            .Where(s => s.Strike < majorNegStrike)
+            .OrderByDescending(s => s.Strike)
+            .Take(_negWallScanStrikes)
+            .ToList();
+
+        // If there are zero strikes below, that itself is total vacuum
+
+        // 4. Sum the absolute GEX of those strikes below
+        double absGammaBelow = strikesBelow
+            .Sum(s => Math.Abs(useVolume ? s.GexByVolume : s.GexByOi));
+
+        // Vacuum condition: absolute sum below < vacuumPct% of |Major Negative GEX|
+        double threshold = absMajorNegGex * (_negWallVacuumPct / 100.0);
+
+        if (absGammaBelow >= threshold)
+            return;
+
+        // 5. Fire the alert!
+        _lastNegativeWallAlertTime = DateTime.UtcNow;
+
+        string majorNegStr = FormatGexValue(majorNegGex);
+        string belowStr = FormatGexValue(absGammaBelow);
+        double vacuumPct = absMajorNegGex > 0 ? (absGammaBelow / absMajorNegGex * 100) : 0;
+        int scanned = strikesBelow.Count;
+
+        string msg = $"\ud83e\uddf1 MURO NEGATIVO: Precio en zona de Major\u2212 ({majorNegStrike:F0}, {majorNegStr}). " +
+                     $"Vac\u00edo debajo: {belowStr} ({vacuumPct:F1}% de |Major\u2212|, {scanned} strikes). " +
+                     $"Probabilidad extrema de soporte / rebote al tick.";
+
+        AddAlert("alert", msg);
+        ShowAlertOverlay(msg, Color.FromArgb(255, 100, 150, 255));
+    }
+
+    /// <summary>
+    /// Shows a floating alert message on the chart for AlertDisplaySeconds.
+    /// </summary>
+    private void ShowAlertOverlay(string message, Color color)
+    {
+        _activeAlertMessage = message;
+        _activeAlertColor = color;
+        _alertMessageExpiry = DateTime.UtcNow.AddSeconds(AlertDisplaySeconds);
     }
 
     #endregion
