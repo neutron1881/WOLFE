@@ -1,0 +1,55 @@
+Sistema de Alertas Contextuales (GexBotA Classic)
+1. 🛑 Alerta de Agotamiento (El Techo / Suelo de Cristal)
+Basado en tu regla: "No tiene por qué subir más arriba porque no hay gama para cubrir".
+
+La Lógica (C#): El algoritmo detecta que el precio Spot acaba de cruzar el Major Positive Gamma hacia arriba. Inmediatamente, suma la Gamma total de los siguientes 5 o 10 strikes superiores. Si esa suma es menor al X% de la Gamma del Major Positive, dispara la alerta.
+
+Aviso en Pantalla/Audio: * Mensaje: ⚠️ AGOTAMIENTO ALCISTA: Precio superó el Major Positive, pero NO HAY Gamma arriba. Alta probabilidad de reversión (Fade).
+
+Utilidad Operativa: Te avisa para que no persigas el largo. Es el momento de buscar gatillos en tu OrderFlow para entrar en corto (reversión), ya que el Market Maker ha terminado de cubrir sus posiciones y tomará ganancias.
+
+2. 🚀 Alerta de Efecto Imán (Continuación de Tendencia)
+Basado en el concepto de que la Gamma positiva por encima del precio actúa atrayendo el precio para coberturas.
+
+La Lógica (C#): El precio rompe un nivel de Gamma relevante (o el Zero Gamma) al alza, y el algoritmo detecta que en los strikes superiores (ej. a 20-50 puntos en NQ) existe un bloque masivo de Call Gamma (Gamma verde/positiva).
+
+Aviso en Pantalla/Audio:
+
+Mensaje: 🚀 VÍA LIBRE: Quiebre de nivel confirmado. Fuerte Gamma Positiva actuando como imán en el Strike [XXXX].
+
+Utilidad Operativa: Te da la confianza para mantener el trade abierto (Hold) y hacer trailing stop en lugar de tomar ganancias prematuras. Sabes que el Market Maker tiene que seguir comprando futuros hasta el siguiente nivel.
+
+3. 📉 Alerta de Liquidación Institucional (Cambio de Régimen Intradía)
+Basado en los datos de "Lookback" (cambios de 5, 15, 30 minutos de la API Classic).
+
+La Lógica (C#): En la actualización asíncrona, el algoritmo compara la Gamma Total del Major Positive actual con la de hace 15 minutos. Si el precio está en ese nivel y la Gamma se reduce drásticamente (ej. desaparecen millones/billones en Gamma).
+
+Aviso en Pantalla/Audio:
+
+Mensaje: 💸 LIQUIDACIÓN: Institucionales cerrando opciones en el Major Positive. La Gamma ha caído un [X]%. Cuidado con los largos.
+
+Utilidad Operativa: Te avisa de que el muro de resistencia o soporte se está desmoronando en tiempo real. Los institucionales están cobrando sus beneficios y la reversión está a punto de ocurrir.
+
+4. 🧱 Alerta de Muro de Gamma (Hard Block)
+Ideal para identificar rebotes exactos "al tick".
+
+La Lógica (C#): El precio cae rápidamente hacia el Major Negative Gamma. El algoritmo escanea los strikes debajo de ese nivel y detecta que la Gamma es prácticamente inexistente (un vacío total).
+
+Aviso en Pantalla/Audio:
+
+Mensaje: 🧱 MURO NEGATIVO: Precio en Major Negative sin Gamma debajo. Máxima zona de soporte duro.
+
+Utilidad Operativa: Te prepara psicológicamente para ejecutar el largo (compra) con un Stop Loss sumamente ajustado justo por debajo del nivel, sabiendo que si lo rompe, el mercado caerá al vacío, pero la probabilidad de rebote ahí es altísima.
+
+💻 ¿Cómo implementamos esto en C# para ATAS?
+Para que el indicador pueda lanzar estas alertas inteligentes, necesitamos estructurar la memoria del indicador así:
+
+Matrices de Escaneo (Arrays): Al recibir el JSON de Gexbot Classic, separaremos los datos en dos listas dinámicas: StrikesAbovePrice y StrikesBelowPrice.
+
+Suma Condicional: Crearemos un método que sume la Gamma de los próximos N niveles. Ejemplo:
+
+C#
+double gammaAbove = CalculateGammaInNextStrikes(currentPrice, 5); // Suma la gamma de los siguientes 5 strikes
+Disparador de Notificaciones: Usaremos la interfaz Chart.SendAlert nativa de ATAS o dibujaremos cajas de texto directamente en el canvas (RenderText) para que los mensajes aparezcan flotando en la esquina de tu gráfico sin molestar las velas.
+
+Con este enfoque, el indicador deja de ser un simple dibujo y se convierte en un analista de liquidez que te susurra al oído lo que están haciendo los creadores de mercado.
