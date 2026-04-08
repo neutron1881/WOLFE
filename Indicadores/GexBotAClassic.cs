@@ -87,6 +87,14 @@ public sealed class GexBotAClassic : Indicator
         [Description("Left")] Left
     }
 
+    public enum HistogramMode
+    {
+        [Description("Split (Calls right / Puts left)")]
+        Split,
+        [Description("Stacked (all bars same direction)")]
+        Stacked
+    }
+
     public enum PanelSizeOption
     {
         [Description("1/8th")] Eighth,
@@ -159,6 +167,7 @@ public sealed class GexBotAClassic : Indicator
     private Color _positiveColor = Color.Green;
     private Color _negativeColor = Color.Red;
     private int _barWidth = 3;
+    private HistogramMode _histogramMode = HistogramMode.Split;
 
     // Center line (Call/Put divider)
     private bool _showCenterLine = true;
@@ -379,6 +388,14 @@ public sealed class GexBotAClassic : Indicator
     {
         get => _panelSize;
         set { _panelSize = value; RecalculateValues(); }
+    }
+
+    [Display(Name = "Histogram Mode", GroupName = "General Options", Order = 11,
+        Description = "Split: Calls to the right, Puts to the left (bidirectional). Stacked: all bars grow in the same direction.")]
+    public HistogramMode BarMode
+    {
+        get => _histogramMode;
+        set { _histogramMode = value; RecalculateValues(); }
     }
 
     [Display(Name = "Background", GroupName = "General Options", Order = 12)]
@@ -1131,11 +1148,13 @@ public sealed class GexBotAClassic : Indicator
 
     private void DrawHistogram(RenderContext context, GexClassicData data, Rectangle histRect)
     {
+        bool stacked = _histogramMode == HistogramMode.Stacked;
         int centerX = histRect.Left + histRect.Width / 2;
         int maxBarHalf = histRect.Width / 2 - 4;
+        int maxBarFull = histRect.Width - 8;
 
-        // Draw vertical center line (Call/Put divider)
-        if (_showCenterLine && _centerLinePen != null)
+        // Draw vertical center line (Call/Put divider) — only in Split mode
+        if (!stacked && _showCenterLine && _centerLinePen != null)
             context.DrawLine(_centerLinePen, centerX, histRect.Top, centerX, histRect.Bottom);
 
         bool useVolume = _gexType == GexType.Volume;
@@ -1150,22 +1169,25 @@ public sealed class GexBotAClassic : Indicator
                 continue;
 
             double gex = useVolume ? strike.GexByVolume : strike.GexByOi;
-            int width = ScaleGex(Math.Abs(gex), maxAbsGex, maxBarHalf);
-            if (width < 1) width = 1;
-
             int barTop = y - _barWidth / 2;
             Rectangle barRect;
-            Color barColor;
+            Color barColor = gex >= 0 ? _positiveColor : _negativeColor;
 
-            if (gex >= 0)
+            if (stacked)
             {
-                barRect = new Rectangle(centerX, barTop, width, _barWidth);
-                barColor = _positiveColor;
+                // Stacked: all bars grow from left edge to the right
+                int width = ScaleGex(Math.Abs(gex), maxAbsGex, maxBarFull);
+                if (width < 1) width = 1;
+                barRect = new Rectangle(histRect.Left + 4, barTop, width, _barWidth);
             }
             else
             {
-                barRect = new Rectangle(centerX - width, barTop, width, _barWidth);
-                barColor = _negativeColor;
+                // Split: Calls right of center, Puts left of center
+                int width = ScaleGex(Math.Abs(gex), maxAbsGex, maxBarHalf);
+                if (width < 1) width = 1;
+                barRect = gex >= 0
+                    ? new Rectangle(centerX, barTop, width, _barWidth)
+                    : new Rectangle(centerX - width, barTop, width, _barWidth);
             }
 
             context.FillRectangle(barColor, barRect);
@@ -1199,8 +1221,10 @@ public sealed class GexBotAClassic : Indicator
             if (c.show) { anyEnabled = true; break; }
         if (!anyEnabled) return;
 
+        bool stacked = _histogramMode == HistogramMode.Stacked;
         int centerX = histRect.Left + histRect.Width / 2;
         int maxBarHalf = histRect.Width / 2 - 4;
+        int maxBarFull = histRect.Width - 8;
 
         bool useVolume = _gexType == GexType.Volume;
         double maxAbsGex = data.Strikes.Max(s => Math.Abs(useVolume ? s.GexByVolume : s.GexByOi));
@@ -1219,7 +1243,16 @@ public sealed class GexBotAClassic : Indicator
                     continue;
 
                 double priorGex = strike.Priors[idx];
-                int dotX = centerX + ScaleGexSigned(priorGex, maxAbsGex, maxBarHalf);
+                int dotX;
+                if (stacked)
+                {
+                    // Stacked: dot position = left edge + scaled absolute value
+                    dotX = histRect.Left + 4 + ScaleGex(Math.Abs(priorGex), maxAbsGex, maxBarFull);
+                }
+                else
+                {
+                    dotX = centerX + ScaleGexSigned(priorGex, maxAbsGex, maxBarHalf);
+                }
                 int half = size / 2;
 
                 var dotRect = new Rectangle(dotX - half, y - half, size, size);
@@ -1237,12 +1270,14 @@ public sealed class GexBotAClassic : Indicator
         if (_strikeLabelFont == null || _gammaCallLabelFont == null || _gammaPutLabelFont == null)
             return;
 
+        bool stacked = _histogramMode == HistogramMode.Stacked;
         bool useVolume = _gexType == GexType.Volume;
         double maxAbsGex = data.Strikes.Max(s => Math.Abs(useVolume ? s.GexByVolume : s.GexByOi));
         if (maxAbsGex < 0.0001) maxAbsGex = 1;
 
         int centerX = histRect.Left + histRect.Width / 2;
         int maxBarHalf = histRect.Width / 2 - 4;
+        int maxBarFull = histRect.Width - 8;
 
         foreach (var strike in data.Strikes)
         {
@@ -1253,10 +1288,20 @@ public sealed class GexBotAClassic : Indicator
 
             double gex = useVolume ? strike.GexByVolume : strike.GexByOi;
             bool isCall = gex >= 0;
-            int barWidth = ScaleGex(Math.Abs(gex), maxAbsGex, maxBarHalf);
-            if (barWidth < 1) barWidth = 1;
 
-            int barTipX = isCall ? centerX + barWidth : centerX - barWidth;
+            int barTipX;
+            if (stacked)
+            {
+                int barWidth = ScaleGex(Math.Abs(gex), maxAbsGex, maxBarFull);
+                if (barWidth < 1) barWidth = 1;
+                barTipX = histRect.Left + 4 + barWidth;
+            }
+            else
+            {
+                int barWidth = ScaleGex(Math.Abs(gex), maxAbsGex, maxBarHalf);
+                if (barWidth < 1) barWidth = 1;
+                barTipX = isCall ? centerX + barWidth : centerX - barWidth;
+            }
 
             // ── Strike price label (raw ticker price, NOT chart-converted) ──
             int labelX = barTipX + _strikeLabelOffsetX;
@@ -1265,7 +1310,7 @@ public sealed class GexBotAClassic : Indicator
                 string strikeText = $"{strike.Strike:F0}";
                 var sz = context.MeasureString(strikeText, _strikeLabelFont);
 
-                int lx = isCall ? labelX + 2 : labelX - sz.Width - 2;
+                int lx = stacked ? labelX + 2 : (isCall ? labelX + 2 : labelX - sz.Width - 2);
                 int ly = y - sz.Height / 2;
                 var bgRect = new Rectangle(lx - 1, ly - 1, sz.Width + 2, sz.Height + 1);
 
@@ -1273,7 +1318,7 @@ public sealed class GexBotAClassic : Indicator
                     context.FillRectangle(_strikeLabelBg, bgRect);
                 context.DrawString(strikeText, _strikeLabelFont, _strikeLabelColor, lx, ly);
 
-                labelX = isCall ? lx + sz.Width : lx;
+                labelX = stacked ? lx + sz.Width : (isCall ? lx + sz.Width : lx);
             }
 
             // ── Gamma value label (Call or Put, independent config) ──
@@ -1288,9 +1333,9 @@ public sealed class GexBotAClassic : Indicator
                 string gammaText = FormatGexValue(gex);
                 var gsz = context.MeasureString(gammaText, font);
 
-                int gx = isCall
+                int gx = stacked
                     ? labelX + offset
-                    : labelX - gsz.Width - offset;
+                    : (isCall ? labelX + offset : labelX - gsz.Width - offset);
 
                 int gy = y - gsz.Height / 2;
                 var gBgRect = new Rectangle(gx - 1, gy - 1, gsz.Width + 2, gsz.Height + 1);
